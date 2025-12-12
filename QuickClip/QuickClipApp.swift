@@ -32,6 +32,7 @@ struct QuickClipApp: App {
                     appDelegate.setupManagers(modelContainer: sharedModelContainer)
                     if let window = NSApplication.shared.windows.first {
                         window.delegate = appDelegate
+                        appDelegate.mainWindow = window
                     }
                 }
         }
@@ -45,6 +46,7 @@ struct QuickClipApp: App {
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarManager: MenuBarManager?
     private var hotKeyManager: HotKeyManager?
+    weak var mainWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 设置窗口关闭行为为隐藏而不是退出
@@ -83,10 +85,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func showMainWindow() {
-        NSApplication.shared.activate(ignoringOtherApps: true)
+        NSApplication.shared.setActivationPolicy(.regular)
 
-        if let window = NSApplication.shared.windows.first {
-            window.makeKeyAndOrderFront(nil)
+        let app = NSApplication.shared
+        let window = mainWindow ?? app.windows.first
+
+        // 第一次激活
+        NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+        app.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
+
+        // 延迟再次激活，确保菜单栏事件结束后仍能获取焦点
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+            app.activate(ignoringOtherApps: true)
+            window?.makeKeyAndOrderFront(nil)
         }
     }
 }
@@ -94,6 +107,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 extension AppDelegate: NSWindowDelegate {
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         sender.orderOut(nil)
+        NSApplication.shared.setActivationPolicy(.accessory)
         return false
     }
 }

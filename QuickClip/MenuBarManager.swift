@@ -97,10 +97,11 @@ class MenuBarManager: NSObject, NSMenuDelegate {
             menu.addItem(NSMenuItem.separator())
 
             // 打开主界面
+            let isWindowVisible = isMainWindowVisible()
             let openItem = NSMenuItem(
-                title: "Open QuickClip",
-                action: #selector(openMainWindow),
-                keyEquivalent: "o"
+                title: isWindowVisible ? "Hide QuickClip" : "Open QuickClip",
+                action: #selector(toggleMainWindow),
+                keyEquivalent: isWindowVisible ? "h" : "o"
             )
             openItem.target = self
             menu.addItem(openItem)
@@ -138,6 +139,29 @@ class MenuBarManager: NSObject, NSMenuDelegate {
 
     @objc private func openMainWindow() {
         showMainWindow()
+    }
+
+    private func isMainWindowVisible() -> Bool {
+        guard let window = NSApplication.shared.windows.first else { return false }
+        return window.isVisible
+    }
+
+    @objc private func toggleMainWindow() {
+        guard let window = NSApplication.shared.windows.first else {
+            DispatchQueue.main.async { [weak self] in
+                self?.showMainWindow()
+            }
+            return
+        }
+
+        if window.isVisible {
+            window.orderOut(nil)
+            NSApplication.shared.setActivationPolicy(.accessory)
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.showMainWindow()
+            }
+        }
     }
 
     @objc private func quitApp() {
