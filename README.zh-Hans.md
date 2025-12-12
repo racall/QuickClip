@@ -2,7 +2,7 @@
 
 [English](./README.md)
 
-QuickClip 是一个基于 SwiftUI + SwiftData 的 macOS 菜单栏剪贴板/片段管理工具。
+QuickClip 是一个基于 SwiftUI + SwiftData 的 macOS 文本/代码片段管理工具。
 
 ## 功能
 

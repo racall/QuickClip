@@ -2,7 +2,7 @@ QuickClip
 
 [中文](./README.zh-Hans.md)
 
-QuickClip is a macOS menu bar clipboard/snippet utility built with SwiftUI + SwiftData.
+QuickClip is a macOS menu bar code snippets or text snippets utility built with SwiftUI + SwiftData.
 
 
 Features
