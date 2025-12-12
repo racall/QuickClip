@@ -14,19 +14,21 @@ final class Snippet {
     var title: String
     var content: String
     var shortcutKey: String?
+    var showInMenuBar: Bool?
     var createdAt: Date
     var updatedAt: Date
 
-    init(title: String = "新片段", content: String = "", shortcutKey: String? = nil) {
+    init(title: String = "新片段", content: String = "", shortcutKey: String? = nil, showInMenuBar: Bool = false) {
         self.id = UUID()
         self.title = title
         self.content = content
         self.shortcutKey = shortcutKey
+        self.showInMenuBar = showInMenuBar
         self.createdAt = Date()
         self.updatedAt = Date()
     }
 
-    func updateContent(title: String? = nil, content: String? = nil, shortcutKey: String? = nil) {
+    func updateContent(title: String? = nil, content: String? = nil, shortcutKey: String? = nil, showInMenuBar: Bool? = nil) {
         if let title = title {
             self.title = title
         }
@@ -35,6 +37,9 @@ final class Snippet {
         }
         if shortcutKey != nil {
             self.shortcutKey = shortcutKey
+        }
+        if let showInMenuBar = showInMenuBar {
+            self.showInMenuBar = showInMenuBar
         }
         self.updatedAt = Date()
     }

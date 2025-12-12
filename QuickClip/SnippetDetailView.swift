@@ -14,34 +14,46 @@ struct SnippetDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var updateTask: Task<Void, Never>?
     @State private var isCopied: Bool = false
+    
+    private var showInMenuBarBinding: Binding<Bool> {
+        Binding(
+            get: { snippet.showInMenuBar ?? false },
+            set: { newValue in
+                snippet.showInMenuBar = newValue
+                snippet.updatedAt = Date()
+                try? modelContext.save()
+                NotificationCenter.default.post(name: NSNotification.Name("MenuBarNeedUpdate"), object: nil)
+            }
+        )
+    }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                // 标题输入
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("标题")
-                        .font(.headline)
-                    TextField("输入片段标题", text: $snippet.title)
-                        .textFieldStyle(.roundedBorder)
-                }
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    DetailSectionCard(title: "标题") {
+                        TextField("输入片段标题", text: $snippet.title)
+                            .textFieldStyle(.plain)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(Color(nsColor: .textBackgroundColor))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .stroke(Color.black.opacity(0.10), lineWidth: 1)
+                            )
+                    }
 
-                // 内容输入
-                VStack(alignment: .leading, spacing: 8) {
-                    // 操作按钮
-                    HStack {
-                        Text("内容")
-                            .font(.headline)
-                        Spacer()
+                    DetailSectionCard(title: "内容", trailing: {
                         Button {
                             ClipboardHelper.copyToClipboard(snippet.content)
 
-                            // 显示复制成功状态
                             withAnimation(.easeInOut(duration: 0.2)) {
                                 isCopied = true
                             }
 
-                            // 1.5秒后恢复
                             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                                 withAnimation(.easeInOut(duration: 0.2)) {
                                     isCopied = false
@@ -49,93 +61,118 @@ struct SnippetDetailView: View {
                             }
                         } label: {
                             Image(systemName: isCopied ? "checkmark" : "doc.on.clipboard")
-                                .font(.headline)
+                                .font(.system(size: 13, weight: .semibold))
                                 .foregroundColor(isCopied ? .green : .primary)
+                                .frame(width: 28, height: 28)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                        .fill(Color.black.opacity(0.05))
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                        .stroke(Color.black.opacity(0.10), lineWidth: 1)
+                                )
                         }
                         .buttonStyle(.plain)
                         .help(isCopied ? "已复制到剪贴板" : "复制内容到剪贴板")
+                    }) {
+                        TextEditor(text: $snippet.content)
+                            .font(.system(.body, design: .monospaced))
+                            .scrollContentBackground(.hidden)
+                            .padding(10)
+                            .frame(minHeight: 320)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(Color(nsColor: .textBackgroundColor))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .stroke(Color.black.opacity(0.10), lineWidth: 1)
+                            )
                     }
-                    .frame(height: 24)
-                    
-                    TextEditor(text: $snippet.content)
-                        .font(.system(.body, design: .monospaced))
-                        .frame(minHeight: 300)
-                        .border(Color.gray.opacity(0.3), width: 1)
-                }
 
-                // 快捷键设置
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("快捷键")
-                        .font(.headline)
-
-                    HStack {
-                        if let shortcut = snippet.shortcutKey, !shortcut.isEmpty {
-                            Text(shortcut)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(Color.accentColor.opacity(0.2))
-                                .cornerRadius(6)
-                        } else {
-                            Text("未设置")
-                                .foregroundColor(.secondary)
-                        }
-
-                        Button(isRecordingHotkey ? "按下快捷键..." : "录制快捷键") {
-                            isRecordingHotkey.toggle()
-                        }
-                        .buttonStyle(.bordered)
-
-                        if snippet.shortcutKey != nil {
-                            Button("清除") {
-                                print("🗑️ 清除快捷键")
-
-                                // 取消之前的任务
-                                updateTask?.cancel()
-
-                                snippet.shortcutKey = nil
-                                snippet.updatedAt = Date()
-
-                                // 保存数据
-                                do {
-                                    try modelContext.save()
-                                    print("💾 数据已保存")
-                                } catch {
-                                    print("❌ 保存失败: \(error)")
-                                }
-
-                                // 只需要重新注册快捷键，菜单会自动刷新
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                    NotificationCenter.default.post(name: NSNotification.Name("HotKeysNeedUpdate"), object: nil)
-                                }
+                    DetailSectionCard(title: "快捷键") {
+                        HStack(spacing: 10) {
+                            if let shortcut = snippet.shortcutKey, !shortcut.isEmpty {
+                                Text(shortcut)
+                                    .font(.caption.weight(.semibold))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .fill(Color.accentColor.opacity(0.14))
+                                    )
+                            } else {
+                                Text("未设置")
+                                    .foregroundColor(.secondary)
                             }
-                            .buttonStyle(.borderless)
-                            .foregroundColor(.red)
+
+                            Spacer()
+
+                            Button(isRecordingHotkey ? "按下快捷键..." : "录制快捷键") {
+                                isRecordingHotkey.toggle()
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+
+                            if snippet.shortcutKey != nil {
+                                Button("清除") {
+                                    print("🗑️ 清除快捷键")
+
+                                    updateTask?.cancel()
+
+                                    snippet.shortcutKey = nil
+                                    snippet.updatedAt = Date()
+
+                                    do {
+                                        try modelContext.save()
+                                        print("💾 数据已保存")
+                                    } catch {
+                                        print("❌ 保存失败: \(error)")
+                                    }
+
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                        NotificationCenter.default.post(name: NSNotification.Name("HotKeysNeedUpdate"), object: nil)
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .tint(.red)
+                            }
+                        }
+
+                        if isRecordingHotkey {
+                            Text("请按下快捷键组合（如 ⌘⇧C）")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .padding(.top, 2)
                         }
                     }
 
-                    if isRecordingHotkey {
-                        Text("请按下快捷键组合（如 ⌘⇧C）")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                    DetailSectionCard(title: "菜单栏") {
+                        Toggle("在菜单栏中显示", isOn: showInMenuBarBinding)
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
                     }
                 }
-                Spacer()
-                Divider()
-
-                // 时间信息
-                HStack(alignment: .bottom, spacing: 10) {
-                    Spacer()
-                    Text("创建时间: \(snippet.createdAt, format: .dateTime)")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text("更新时间: \(snippet.updatedAt, format: .dateTime)")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                
+                .padding(16)
             }
-            .padding()
+
+            Divider()
+            HStack(alignment: .bottom, spacing: 10) {
+                Spacer()
+                Text("创建时间: \(snippet.createdAt, format: .dateTime)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Text("更新时间: \(snippet.updatedAt, format: .dateTime)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.vertical, 10)
+            .padding(.horizontal)
+            .background(Color.gray.opacity(0.03))
         }
+        .background(Color(nsColor: .windowBackgroundColor))
         .background(
             HotkeyRecorderView(isRecording: $isRecordingHotkey) { keyCombo in
                 print("🎯 录制到快捷键: \(keyCombo)")
@@ -170,6 +207,46 @@ struct SnippetDetailView: View {
             // 取消未完成的任务
             updateTask?.cancel()
         }
+    }
+}
+
+private struct DetailSectionCard<Content: View, Trailing: View>: View {
+    let title: String
+    @ViewBuilder let trailing: () -> Trailing
+    @ViewBuilder let content: () -> Content
+
+    init(title: String, @ViewBuilder content: @escaping () -> Content) where Trailing == EmptyView {
+        self.title = title
+        self.trailing = { EmptyView() }
+        self.content = content
+    }
+
+    init(title: String, @ViewBuilder trailing: @escaping () -> Trailing, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.trailing = trailing
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.secondary)
+                Spacer()
+                trailing()
+            }
+            content()
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.black.opacity(0.03))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.black.opacity(0.08), lineWidth: 1)
+        )
     }
 }
 

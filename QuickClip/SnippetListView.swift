@@ -13,6 +13,7 @@ struct SnippetListView: View {
     @Query(sort: \Snippet.createdAt, order: .reverse) private var allSnippets: [Snippet]
 
     @State private var searchText: String = ""
+    @State private var pendingScrollToSnippetID: UUID?
     @Binding var selectedSnippet: Snippet?
 
     var filteredSnippets: [Snippet] {
@@ -27,66 +28,79 @@ struct SnippetListView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            // 搜索框
-            HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
-                TextField("搜索片段", text: $searchText)
-                    .textFieldStyle(.plain)
-                if !searchText.isEmpty {
-                    Button {
-                        searchText = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.secondary)
+        ScrollViewReader { proxy in
+            VStack(spacing: 0) {
+                // 搜索框
+                HStack {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.secondary)
+                    TextField("搜索片段", text: $searchText)
+                        .textFieldStyle(.plain)
+                    if !searchText.isEmpty {
+                        Button {
+                            searchText = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
-            }
-            .padding(8)
-            .background(Color.gray.opacity(0.1))
-            .cornerRadius(6)
-            .padding()
+                .padding(8)
+                .background(Color.gray.opacity(0.1))
+                .cornerRadius(6)
+                .padding()
 
-            // 片段列表
-            List(selection: $selectedSnippet) {
-                ForEach(filteredSnippets) { snippet in
-                    SnippetRowView(
-                        snippet: snippet,
-                        onDelete: { deleteSnippet(snippet) }
-                    )
-                    .tag(snippet)
+                // 片段列表
+                List(selection: $selectedSnippet) {
+                    ForEach(filteredSnippets) { snippet in
+                        SnippetRowView(
+                            snippet: snippet,
+                            onDelete: { deleteSnippet(snippet) }
+                        )
+                        .id(snippet.id)
+                        .tag(snippet)
+                    }
                 }
-            }
-            .listStyle(.sidebar)
-
-            // 底部工具栏
-            Divider()
-            HStack {
-                Button {
-                    addNewSnippet()
-                } label: {
-                    Label("新建片段", systemImage: "plus")
+                .listStyle(.sidebar)
+                .onChange(of: selectedSnippet?.id) { _, newSelectedID in
+                    guard let targetID = pendingScrollToSnippetID, targetID == newSelectedID else { return }
+                    pendingScrollToSnippetID = nil
+                    DispatchQueue.main.async {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            proxy.scrollTo(targetID, anchor: .center)
+                        }
+                    }
                 }
-                .buttonStyle(.borderless)
-                .padding(.vertical, 8)
-                .padding(.horizontal, 12)
 
-                Spacer()
+                // 底部工具栏
+                Divider()
+                HStack {
+                    Button {
+                        addNewSnippet()
+                    } label: {
+                        Label("新建片段", systemImage: "plus")
+                    }
+                    .buttonStyle(.borderless)
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 12)
 
-                Text("\(filteredSnippets.count) 个片段")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .padding(.trailing, 12)
+                    Spacer()
+
+                    Text("\(filteredSnippets.count) 个片段")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.trailing, 12)
+                }
+                .background(Color.gray.opacity(0.05))
             }
-            .background(Color.gray.opacity(0.05))
         }
     }
 
     private func addNewSnippet() {
         let newSnippet = Snippet()
         modelContext.insert(newSnippet)
+        pendingScrollToSnippetID = newSnippet.id
         selectedSnippet = newSnippet
         // 数据已保存，菜单会在打开时自动刷新
     }
@@ -126,30 +140,20 @@ struct SnippetRowView: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(snippet.title.isEmpty ? "未命名片段" : snippet.title)
-                        .font(.headline)
-                        .foregroundColor(snippet.title.isEmpty ? .secondary : .primary)
-                        .lineLimit(1)
+            Text(snippet.title.isEmpty ? "未命名片段" : snippet.title)
+                .font(.headline)
+                .foregroundColor(snippet.title.isEmpty ? .secondary : .primary)
+                .lineLimit(1)
 
-                    Spacer()
+            Spacer()
 
-                    if let shortcut = snippet.shortcutKey, !shortcut.isEmpty {
-                        Text(shortcut)
-                            .font(.caption)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.accentColor.opacity(0.2))
-                            .cornerRadius(4)
-                    }
-                }
-
-                Text(snippet.content.isEmpty ? "暂无内容" : snippet.content)
+            if let shortcut = snippet.shortcutKey, !shortcut.isEmpty {
+                Text(shortcut)
                     .font(.caption)
-                    .foregroundColor(.secondary)
-                    .lineLimit(2)
-                    .frame(minHeight: 28, alignment: .topLeading)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.accentColor.opacity(0.2))
+                    .cornerRadius(4)
             }
 
             // 悬停时显示删除按钮
@@ -166,7 +170,7 @@ struct SnippetRowView: View {
             }
         }
         .padding(.vertical, 6)
-        .frame(minHeight: 60)
+        .frame(minHeight: 44)
         .contentShape(Rectangle())
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) {

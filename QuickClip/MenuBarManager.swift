@@ -15,12 +15,21 @@ class MenuBarManager: NSObject, NSMenuDelegate {
     private var modelContext: ModelContext
     private var showMainWindow: () -> Void
     private var feedbackTimer: Timer?
+    private var menuUpdateObserver: NSObjectProtocol?
 
     init(modelContext: ModelContext, showMainWindow: @escaping () -> Void) {
         self.modelContext = modelContext
         self.showMainWindow = showMainWindow
         super.init()
         setupMenuBar()
+        
+        menuUpdateObserver = NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("MenuBarNeedUpdate"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.updateMenu()
+        }
     }
 
     private func setupMenuBar() {
@@ -49,8 +58,9 @@ class MenuBarManager: NSObject, NSMenuDelegate {
 
         menu.removeAllItems()
 
-        // 获取前10个片段
+        // 获取前10个启用菜单栏显示的片段
         let fetchDescriptor = FetchDescriptor<Snippet>(
+            predicate: #Predicate { $0.showInMenuBar == true },
             sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]
         )
 
@@ -59,7 +69,7 @@ class MenuBarManager: NSObject, NSMenuDelegate {
             let topSnippets = Array(snippets.prefix(10))
 
             if topSnippets.isEmpty {
-                let noSnippetsItem = NSMenuItem(title: "暂无片段", action: nil, keyEquivalent: "")
+                let noSnippetsItem = NSMenuItem(title: "暂无显示片段", action: nil, keyEquivalent: "")
                 noSnippetsItem.isEnabled = false
                 menu.addItem(noSnippetsItem)
             } else {
@@ -144,6 +154,12 @@ class MenuBarManager: NSObject, NSMenuDelegate {
                 button.image = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "QuickClip")
                 button.image?.isTemplate = true
             }
+        }
+    }
+    
+    deinit {
+        if let menuUpdateObserver = menuUpdateObserver {
+            NotificationCenter.default.removeObserver(menuUpdateObserver)
         }
     }
 }
