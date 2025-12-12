@@ -1,8 +1,8 @@
 //
-//  MenuBarManager.swift
-//  QuickClip
+//  菜单栏管理
+//  快速剪贴
 //
-//  Created by Brian He on 2025/12/9.
+//  创建者：Brian He（2025/12/9）
 //
 
 import AppKit
@@ -47,9 +47,9 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         updateMenu()
     }
 
-    // NSMenuDelegate 方法：菜单即将打开时刷新数据
+    // 菜单代理方法（NSMenuDelegate）：菜单即将打开时刷新数据
     func menuWillOpen(_ menu: NSMenu) {
-        print("🔄 菜单即将打开，刷新数据")
+        print("🔄 Menu will open. Refreshing data")
         updateMenu()
     }
 
@@ -69,12 +69,12 @@ class MenuBarManager: NSObject, NSMenuDelegate {
             let topSnippets = Array(snippets.prefix(10))
 
             if topSnippets.isEmpty {
-                let noSnippetsItem = NSMenuItem(title: "暂无显示片段", action: nil, keyEquivalent: "")
+                let noSnippetsItem = NSMenuItem(title: "No menu bar snippets", action: nil, keyEquivalent: "")
                 noSnippetsItem.isEnabled = false
                 menu.addItem(noSnippetsItem)
             } else {
                 for snippet in topSnippets {
-                    let title = snippet.title.isEmpty ? "未命名片段" : snippet.title
+                    let title = snippet.title.isEmpty ? "Untitled" : snippet.title
                     let displayTitle = "\(title)"
 
                     let menuItem = NSMenuItem(
@@ -98,7 +98,7 @@ class MenuBarManager: NSObject, NSMenuDelegate {
 
             // 打开主界面
             let openItem = NSMenuItem(
-                title: "打开 QuickClip",
+                title: "Open QuickClip",
                 action: #selector(openMainWindow),
                 keyEquivalent: "o"
             )
@@ -107,7 +107,7 @@ class MenuBarManager: NSObject, NSMenuDelegate {
 
             // 退出应用
             let quitItem = NSMenuItem(
-                title: "退出",
+                title: "Quit",
                 action: #selector(quitApp),
                 keyEquivalent: "q"
             )
@@ -148,7 +148,7 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         feedbackTimer?.invalidate()
 
         if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: "已复制")
+            button.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: "Copied")
 
             feedbackTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) { _ in
                 button.image = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "QuickClip")

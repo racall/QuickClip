@@ -1,8 +1,8 @@
 //
-//  HotKeyManager.swift
-//  QuickClip
+//  全局快捷键管理
+//  快速剪贴
 //
-//  Created by Brian He on 2025/12/9.
+//  创建者：Brian He（2025/12/9）
 //
 
 import AppKit
@@ -30,10 +30,10 @@ class HotKeyManager {
         let accessEnabled = AXIsProcessTrustedWithOptions(options)
 
         if accessEnabled {
-            print("✅ 辅助功能权限已授予")
+            print("✅ Accessibility permission granted")
         } else {
-            print("⚠️ 需要辅助功能权限才能使用全局快捷键")
-            print("请前往：系统设置 > 隐私与安全性 > 辅助功能，添加 QuickClip")
+            print("⚠️ Accessibility permission is required for global hotkeys")
+            print("Go to: System Settings > Privacy & Security > Accessibility, then add QuickClip")
         }
     }
 
@@ -74,36 +74,36 @@ class HotKeyManager {
     }
 
     func registerAllHotKeys() {
-        print("🔄 开始注册所有快捷键...")
+        print("🔄 Registering all hotkeys...")
         unregisterAllHotKeys()
 
         let fetchDescriptor = FetchDescriptor<Snippet>()
 
         do {
             let snippets = try modelContext.fetch(fetchDescriptor)
-            print("📋 找到 \(snippets.count) 个片段")
+            print("📋 Found \(snippets.count) snippets")
 
             var registeredCount = 0
             for snippet in snippets {
                 if let shortcut = snippet.shortcutKey, !shortcut.isEmpty {
-                    print("🔑 尝试注册快捷键: \(shortcut) for '\(snippet.title)'")
+                    print("🔑 Registering hotkey: \(shortcut) for '\(snippet.title)'")
                     registerHotKey(for: snippet, shortcut: shortcut)
                     registeredCount += 1
                 }
             }
-            print("✅ 成功注册 \(registeredCount) 个快捷键")
+            print("✅ Registered \(registeredCount) hotkeys")
         } catch {
-            print("❌ 获取片段失败: \(error)")
+            print("❌ Failed to fetch snippets: \(error)")
         }
     }
 
     private func registerHotKey(for snippet: Snippet, shortcut: String) {
         guard let (keyCode, modifiers) = parseShortcut(shortcut) else {
-            print("❌ 解析快捷键失败: \(shortcut)")
+            print("❌ Failed to parse shortcut: \(shortcut)")
             return
         }
 
-        print("  解析结果 - keyCode: \(keyCode), modifiers: \(modifiers)")
+        print("  Parsed - keyCode: \(keyCode), modifiers: \(modifiers)")
 
         var hotKeyRef: EventHotKeyRef?
 
@@ -113,7 +113,7 @@ class HotKeyManager {
         let safeID = UInt32(truncatingIfNeeded: hash)
 
         let hotKeyID = EventHotKeyID(signature: OSType(0x48545259), id: safeID)
-        print("  生成 HotKey ID: \(safeID)")
+        print("  Generated HotKey ID: \(safeID)")
 
         let status = RegisterEventHotKey(
             UInt32(keyCode),
@@ -127,9 +127,9 @@ class HotKeyManager {
         if status == noErr, let hotKeyRef = hotKeyRef {
             hotKeyRefs[snippet.id] = hotKeyRef
             hotKeyIDs[snippet.id] = hotKeyID
-            print("  ✅ 快捷键注册成功")
+            print("  ✅ Hotkey registered")
         } else {
-            print("  ❌ 快捷键注册失败 (status: \(status)) for: \(snippet.title)")
+            print("  ❌ Hotkey registration failed (status: \(status)) for: \(snippet.title)")
         }
     }
 
@@ -142,14 +142,14 @@ class HotKeyManager {
     }
 
     private func handleHotKey(id: EventHotKeyID) {
-        print("⌨️ 快捷键被触发! ID: \(id.id)")
+        print("⌨️ Hotkey triggered! ID: \(id.id)")
 
         guard let snippetId = hotKeyIDs.first(where: { $0.value.id == id.id })?.key else {
-            print("❌ 未找到对应的片段ID")
+            print("❌ No matching snippet ID found")
             return
         }
 
-        print("📝 找到片段ID: \(snippetId)")
+        print("📝 Found snippet ID: \(snippetId)")
 
         let fetchDescriptor = FetchDescriptor<Snippet>(
             predicate: #Predicate { $0.id == snippetId }
@@ -157,12 +157,12 @@ class HotKeyManager {
 
         do {
             if let snippet = try modelContext.fetch(fetchDescriptor).first {
-                print("✅ 复制片段到剪贴板: \(snippet.title)")
+                print("✅ Copied snippet to clipboard: \(snippet.title)")
                 ClipboardHelper.copyToClipboard(snippet.content)
                 menuBarManager?.showCopyFeedback()
             }
         } catch {
-            print("❌ 获取片段失败: \(error)")
+            print("❌ Failed to fetch snippet: \(error)")
         }
     }
 

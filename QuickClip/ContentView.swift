@@ -1,8 +1,8 @@
 //
-//  ContentView.swift
-//  QuickClip
+//  主界面
+//  快速剪贴
 //
-//  Created by Brian He on 2025/12/9.
+//  创建者：Brian He（2025/12/9）
 //
 
 import SwiftUI
@@ -23,7 +23,7 @@ struct ContentView: View {
                     Image(systemName: "doc.text")
                         .font(.system(size: 60))
                         .foregroundColor(.secondary)
-                    Text("选择或创建一个片段")
+                    Text("Select or create a snippet")
                         .font(.title2)
                         .foregroundColor(.secondary)
                 }

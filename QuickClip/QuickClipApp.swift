@@ -1,8 +1,8 @@
 //
-//  QuickClipApp.swift
-//  QuickClip
+//  应用入口
+//  快速剪贴
 //
-//  Created by Brian He on 2025/12/9.
+//  创建者：Brian He（2025/12/9）
 //
 
 import SwiftUI
@@ -63,7 +63,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 延迟注册快捷键，确保应用完全启动
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            print("🚀 应用启动完成，开始注册快捷键...")
+            print("🚀 App started. Registering hotkeys...")
             self?.hotKeyManager?.registerAllHotKeys()
         }
 
@@ -74,7 +74,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            print("🔑 收到快捷键更新通知")
+            print("🔑 Hotkey update notification received")
             // 稍微延迟以确保数据已保存
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 self?.hotKeyManager?.registerAllHotKeys()

@@ -1,8 +1,8 @@
 //
-//  SnippetListView.swift
-//  QuickClip
+//  片段列表视图
+//  快速剪贴
 //
-//  Created by Brian He on 2025/12/9.
+//  创建者：Brian He（2025/12/9）
 //
 
 import SwiftUI
@@ -34,7 +34,7 @@ struct SnippetListView: View {
                 HStack {
                     Image(systemName: "magnifyingglass")
                         .foregroundColor(.secondary)
-                    TextField("搜索片段", text: $searchText)
+                    TextField("Search snippets", text: $searchText)
                         .textFieldStyle(.plain)
                     if !searchText.isEmpty {
                         Button {
@@ -76,23 +76,23 @@ struct SnippetListView: View {
                 // 底部工具栏
                 Divider()
                 HStack {
-                    Button {
-                        addNewSnippet()
-                    } label: {
-                        Label("新建片段", systemImage: "plus")
-                    }
-                    .buttonStyle(.borderless)
-                    .padding(.vertical, 8)
-                    .padding(.horizontal, 12)
+                Button {
+                    addNewSnippet()
+                } label: {
+                    Label("New Snippet", systemImage: "plus")
+                }
+                .buttonStyle(.borderless)
+                .padding(.vertical, 8)
+                .padding(.horizontal, 12)
 
                     Spacer()
 
-                    Text("\(filteredSnippets.count) 个片段")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .padding(.trailing, 12)
-                }
-                .background(Color.gray.opacity(0.05))
+                Text("\(filteredSnippets.count) snippets")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.trailing, 12)
+            }
+            .background(Color.gray.opacity(0.05))
             }
         }
     }
@@ -106,7 +106,7 @@ struct SnippetListView: View {
     }
 
     private func deleteSnippet(_ snippet: Snippet) {
-        print("🗑️ 删除片段: \(snippet.title)")
+        print("🗑️ Delete snippet: \(snippet.title)")
 
         // 检查是否有快捷键
         let hasHotKey = snippet.shortcutKey != nil
@@ -124,7 +124,7 @@ struct SnippetListView: View {
 
         // 如果删除的片段有快捷键，需要重新注册以清除该快捷键
         if hasHotKey {
-            print("📣 片段有快捷键，发送快捷键更新通知")
+            print("📣 Snippet has a hotkey. Posting hotkey update notification.")
             NotificationCenter.default.post(name: NSNotification.Name("HotKeysNeedUpdate"), object: nil)
         }
         // 菜单会在打开时自动刷新，无需手动通知
@@ -140,7 +140,7 @@ struct SnippetRowView: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(snippet.title.isEmpty ? "未命名片段" : snippet.title)
+            Text(snippet.title.isEmpty ? "Untitled" : snippet.title)
                 .font(.headline)
                 .foregroundColor(snippet.title.isEmpty ? .secondary : .primary)
                 .lineLimit(1)
@@ -166,7 +166,7 @@ struct SnippetRowView: View {
                         .font(.system(size: 14))
                 }
                 .buttonStyle(.plain)
-                .help("删除片段")
+                .help("Delete snippet")
             }
         }
         .padding(.vertical, 6)
@@ -178,16 +178,16 @@ struct SnippetRowView: View {
             }
         }
         .confirmationDialog(
-            "确认删除",
+            "Confirm deletion",
             isPresented: $showDeleteConfirmation,
             titleVisibility: .visible
         ) {
-            Button("删除", role: .destructive) {
+            Button("Delete", role: .destructive) {
                 onDelete()
             }
-            Button("取消", role: .cancel) {}
+            Button("Cancel", role: .cancel) {}
         } message: {
-            Text("确定要删除片段「\(snippet.title)」吗？\(snippet.shortcutKey != nil ? "\n此操作将同时移除快捷键设置。" : "")")
+            Text("Delete snippet “\(snippet.title)”? \(snippet.shortcutKey != nil ? "\nThis will also remove its hotkey setting." : "")")
         }
     }
 }

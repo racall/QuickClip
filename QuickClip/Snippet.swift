@@ -1,8 +1,8 @@
 //
-//  Snippet.swift
-//  QuickClip
+//  片段模型
+//  快速剪贴
 //
-//  Created by Brian He on 2025/12/9.
+//  创建者：Brian He（2025/12/9）
 //
 
 import Foundation
@@ -18,7 +18,7 @@ final class Snippet {
     var createdAt: Date
     var updatedAt: Date
 
-    init(title: String = "新片段", content: String = "", shortcutKey: String? = nil, showInMenuBar: Bool = false) {
+    init(title: String = "New Snippet", content: String = "", shortcutKey: String? = nil, showInMenuBar: Bool = false) {
         self.id = UUID()
         self.title = title
         self.content = content

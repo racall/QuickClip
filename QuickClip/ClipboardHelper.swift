@@ -1,8 +1,8 @@
 //
-//  ClipboardHelper.swift
-//  QuickClip
+//  剪贴板工具
+//  快速剪贴
 //
-//  Created by Brian He on 2025/12/9.
+//  创建者：Brian He（2025/12/9）
 //
 
 import AppKit
