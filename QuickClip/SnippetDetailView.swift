@@ -14,6 +14,7 @@ struct SnippetDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var updateTask: Task<Void, Never>?
     @State private var isCopied: Bool = false
+    @State private var isHoveringShortcut: Bool = false
     
     private var showInMenuBarBinding: Binding<Bool> {
         Binding(
@@ -49,50 +50,55 @@ struct SnippetDetailView: View {
 
                 // 快捷键显示
                 if let shortcut = snippet.shortcutKey, !shortcut.isEmpty {
-                    Text(shortcut)
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(Color.accentColor.opacity(0.12))
-                        )
+                    HStack(spacing: 4) {
+                        Text(shortcut)
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(Color.accentColor.opacity(0.12))
+                            )
+
+                        Button {
+                            print("🗑️ Clear hotkey")
+
+                            updateTask?.cancel()
+
+                            snippet.shortcutKey = nil
+                            snippet.updatedAt = Date()
+
+                            do {
+                                try modelContext.save()
+                                print("💾 Saved")
+                            } catch {
+                                print("❌ Save failed: \(error)")
+                            }
+
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                NotificationCenter.default.post(name: NSNotification.Name("HotKeysNeedUpdate"), object: nil)
+                            }
+                        } label: {
+                            Image(systemName: "xmark.circle")
+                                .font(.system(size: 12))
+                                .foregroundColor(.red)
+                        }
+                        .buttonStyle(.plain)
+                        .opacity(isHoveringShortcut ? 1 : 0)
+                        .animation(.easeInOut(duration: 0.2), value: isHoveringShortcut)
+                        .help("Clear hotkey")
+                    }
+                    .onHover { hovering in
+                        isHoveringShortcut = hovering
+                    }
                 } else {
-                    Text("No hotkey")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-
-                Button(isRecordingHotkey ? "Press keys..." : "Record") {
-                    isRecordingHotkey.toggle()
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-
-                if snippet.shortcutKey != nil {
-                    Button("Clear") {
-                        print("🗑️ Clear hotkey")
-
-                        updateTask?.cancel()
-
-                        snippet.shortcutKey = nil
-                        snippet.updatedAt = Date()
-
-                        do {
-                            try modelContext.save()
-                            print("💾 Saved")
-                        } catch {
-                            print("❌ Save failed: \(error)")
-                        }
-
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            NotificationCenter.default.post(name: NSNotification.Name("HotKeysNeedUpdate"), object: nil)
-                        }
+                    Button(isRecordingHotkey ? "Press keys..." : "Record Hotkey") {
+                        isRecordingHotkey.toggle()
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .tint(.red)
                 }
+
 
                 Divider()
                     .frame(height: 20)

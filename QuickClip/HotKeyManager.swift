@@ -1,52 +1,45 @@
-//
-//  全局快捷键管理
-//  快速剪贴
-//
-//  创建者：Brian He（2025/12/9）
-//
-
 import AppKit
 import Carbon
 import SwiftData
-import ApplicationServices
 
-class HotKeyManager {
-    private var modelContext: ModelContext
-    private var menuBarManager: MenuBarManager?
-    private var hotKeyRefs: [UUID: EventHotKeyRef] = [:]
-    private var hotKeyIDs: [UUID: EventHotKeyID] = [:]
+final class HotKeyManager {
+
+    private let modelContext: ModelContext
+    private weak var menuBarManager: MenuBarManager?
+
     private var eventHandler: EventHandlerRef?
-    private static var shared: HotKeyManager?
+    private var hotKeyRefsBySnippetID: [UUID: EventHotKeyRef] = [:]
+
+    // Carbon HotKeyID -> Snippet UUID（O(1) 查找）
+    private var carbonIDToSnippetID: [UInt32: UUID] = [:]
+    private var nextCarbonID: UInt32 = 1
 
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
-        HotKeyManager.shared = self
-        checkAccessibilityPermission()
         setupEventHandler()
-    }
-
-    private func checkAccessibilityPermission() {
-        let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: true]
-        let accessEnabled = AXIsProcessTrustedWithOptions(options)
-
-        if accessEnabled {
-            print("✅ Accessibility permission granted")
-        } else {
-            print("⚠️ Accessibility permission is required for global hotkeys")
-            print("Go to: System Settings > Privacy & Security > Accessibility, then add QuickClip")
-        }
     }
 
     func setMenuBarManager(_ manager: MenuBarManager) {
         self.menuBarManager = manager
     }
 
-    private func setupEventHandler() {
-        var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+    // MARK: - Event Handler
 
-        let callback: EventHandlerUPP = { (nextHandler, theEvent, userData) -> OSStatus in
+    private func setupEventHandler() {
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard),
+            eventKind: UInt32(kEventHotKeyPressed)
+        )
+
+        let callback: EventHandlerUPP = { _, theEvent, userData in
+            guard let userData else { return noErr }
+
+            let manager = Unmanaged<HotKeyManager>
+                .fromOpaque(userData)
+                .takeUnretainedValue()
+
             var hotKeyID = EventHotKeyID()
-            let error = GetEventParameter(
+            let err = GetEventParameter(
                 theEvent,
                 UInt32(kEventParamDirectObject),
                 UInt32(typeEventHotKeyID),
@@ -56,42 +49,37 @@ class HotKeyManager {
                 &hotKeyID
             )
 
-            if error == noErr {
-                HotKeyManager.shared?.handleHotKey(id: hotKeyID)
+            if err == noErr {
+                manager.handleHotKey(carbonID: hotKeyID.id)
             }
-
             return noErr
         }
+
+        // 用 userData 传 self（不用 static shared）
+        let userData = Unmanaged.passUnretained(self).toOpaque()
 
         InstallEventHandler(
             GetApplicationEventTarget(),
             callback,
             1,
             &eventType,
-            nil,
+            userData,
             &eventHandler
         )
     }
 
+    // MARK: - Register / Unregister
+
     func registerAllHotKeys() {
-        print("🔄 Registering all hotkeys...")
         unregisterAllHotKeys()
 
         let fetchDescriptor = FetchDescriptor<Snippet>()
-
         do {
             let snippets = try modelContext.fetch(fetchDescriptor)
-            print("📋 Found \(snippets.count) snippets")
-
-            var registeredCount = 0
             for snippet in snippets {
-                if let shortcut = snippet.shortcutKey, !shortcut.isEmpty {
-                    print("🔑 Registering hotkey: \(shortcut) for '\(snippet.title)'")
-                    registerHotKey(for: snippet, shortcut: shortcut)
-                    registeredCount += 1
-                }
+                guard let shortcut = snippet.shortcutKey, !shortcut.isEmpty else { continue }
+                registerHotKey(for: snippet, shortcut: shortcut)
             }
-            print("✅ Registered \(registeredCount) hotkeys")
         } catch {
             print("❌ Failed to fetch snippets: \(error)")
         }
@@ -103,17 +91,14 @@ class HotKeyManager {
             return
         }
 
-        print("  Parsed - keyCode: \(keyCode), modifiers: \(modifiers)")
-
         var hotKeyRef: EventHotKeyRef?
 
-        // 安全地将 UUID 转换为 UInt32
-        let uuidString = snippet.id.uuidString
-        let hash = abs(uuidString.hashValue)
-        let safeID = UInt32(truncatingIfNeeded: hash)
+        // 分配稳定 carbon ID
+        let carbonID = nextCarbonID
+        nextCarbonID &+= 1
+        carbonIDToSnippetID[carbonID] = snippet.id
 
-        let hotKeyID = EventHotKeyID(signature: OSType(0x48545259), id: safeID)
-        print("  Generated HotKey ID: \(safeID)")
+        let hotKeyID = EventHotKeyID(signature: OSType(0x48545259), id: carbonID)
 
         let status = RegisterEventHotKey(
             UInt32(keyCode),
@@ -124,40 +109,37 @@ class HotKeyManager {
             &hotKeyRef
         )
 
-        if status == noErr, let hotKeyRef = hotKeyRef {
-            hotKeyRefs[snippet.id] = hotKeyRef
-            hotKeyIDs[snippet.id] = hotKeyID
-            print("  ✅ Hotkey registered")
+        if status == noErr, let hotKeyRef {
+            hotKeyRefsBySnippetID[snippet.id] = hotKeyRef
         } else {
-            print("  ❌ Hotkey registration failed (status: \(status)) for: \(snippet.title)")
+            carbonIDToSnippetID.removeValue(forKey: carbonID)
+            print("❌ Hotkey registration failed (status: \(status)) for: \(snippet.title)")
         }
     }
 
     func unregisterAllHotKeys() {
-        for (_, hotKeyRef) in hotKeyRefs {
-            UnregisterEventHotKey(hotKeyRef)
+        for (_, ref) in hotKeyRefsBySnippetID {
+            UnregisterEventHotKey(ref)
         }
-        hotKeyRefs.removeAll()
-        hotKeyIDs.removeAll()
+        hotKeyRefsBySnippetID.removeAll()
+        carbonIDToSnippetID.removeAll()
+        nextCarbonID = 1
     }
 
-    private func handleHotKey(id: EventHotKeyID) {
-        print("⌨️ Hotkey triggered! ID: \(id.id)")
+    // MARK: - Trigger
 
-        guard let snippetId = hotKeyIDs.first(where: { $0.value.id == id.id })?.key else {
-            print("❌ No matching snippet ID found")
+    private func handleHotKey(carbonID: UInt32) {
+        guard let snippetID = carbonIDToSnippetID[carbonID] else {
+            print("❌ No snippet mapping for hotkey id: \(carbonID)")
             return
         }
 
-        print("📝 Found snippet ID: \(snippetId)")
-
         let fetchDescriptor = FetchDescriptor<Snippet>(
-            predicate: #Predicate { $0.id == snippetId }
+            predicate: #Predicate { $0.id == snippetID }
         )
 
         do {
             if let snippet = try modelContext.fetch(fetchDescriptor).first {
-                print("✅ Copied snippet to clipboard: \(snippet.title)")
                 ClipboardHelper.copyToClipboard(snippet.content)
                 menuBarManager?.showCopyFeedback()
             }
@@ -166,31 +148,18 @@ class HotKeyManager {
         }
     }
 
+    // MARK: - Shortcut parsing
+
     private func parseShortcut(_ shortcut: String) -> (keyCode: Int, modifiers: Int)? {
         var modifiers = 0
         var keyString = shortcut
 
-        if shortcut.contains("⌘") {
-            modifiers |= cmdKey
-            keyString = keyString.replacingOccurrences(of: "⌘", with: "")
-        }
-        if shortcut.contains("⇧") {
-            modifiers |= shiftKey
-            keyString = keyString.replacingOccurrences(of: "⇧", with: "")
-        }
-        if shortcut.contains("⌥") {
-            modifiers |= optionKey
-            keyString = keyString.replacingOccurrences(of: "⌥", with: "")
-        }
-        if shortcut.contains("⌃") {
-            modifiers |= controlKey
-            keyString = keyString.replacingOccurrences(of: "⌃", with: "")
-        }
+        if shortcut.contains("⌘") { modifiers |= cmdKey;     keyString = keyString.replacingOccurrences(of: "⌘", with: "") }
+        if shortcut.contains("⇧") { modifiers |= shiftKey;   keyString = keyString.replacingOccurrences(of: "⇧", with: "") }
+        if shortcut.contains("⌥") { modifiers |= optionKey;  keyString = keyString.replacingOccurrences(of: "⌥", with: "") }
+        if shortcut.contains("⌃") { modifiers |= controlKey; keyString = keyString.replacingOccurrences(of: "⌃", with: "") }
 
-        guard let keyCode = keyCodeForCharacter(keyString) else {
-            return nil
-        }
-
+        guard let keyCode = keyCodeForCharacter(keyString) else { return nil }
         return (keyCode, modifiers)
     }
 
@@ -211,13 +180,12 @@ class HotKeyManager {
             ";": 41, "'": 39, ",": 43, ".": 47, "/": 44,
             "`": 50
         ]
-
-        return keyCodeMap[character.uppercased()]
+        return keyCodeMap[character.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()]
     }
 
     deinit {
         unregisterAllHotKeys()
-        if let eventHandler = eventHandler {
+        if let eventHandler {
             RemoveEventHandler(eventHandler)
         }
     }

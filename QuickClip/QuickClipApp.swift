@@ -91,13 +91,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let window = mainWindow ?? app.windows.first
 
         // 第一次激活
-        NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+        NSRunningApplication.current.activate(options: [.activateAllWindows])
         app.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
 
         // 延迟再次激活，确保菜单栏事件结束后仍能获取焦点
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+            NSRunningApplication.current.activate(options: [.activateAllWindows])
             app.activate(ignoringOtherApps: true)
             window?.makeKeyAndOrderFront(nil)
         }
