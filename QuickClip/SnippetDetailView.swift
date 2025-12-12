@@ -266,6 +266,8 @@ struct HotkeyRecorderView: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {
         if let recorderView = nsView as? HotkeyRecorderNSView {
             recorderView.isRecording = isRecording
+            // 关键：SwiftUI 复用 NSView 时也要更新回调，否则会写到旧的 snippet
+            recorderView.onRecorded = onRecorded
         }
     }
 }
