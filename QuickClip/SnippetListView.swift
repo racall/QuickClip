@@ -15,6 +15,7 @@ struct SnippetListView: View {
     @State private var searchText: String = ""
     @State private var pendingScrollToSnippetID: UUID?
     @Binding var selectedSnippet: Snippet?
+    @Binding var isShowingSettings: Bool
 
     var filteredSnippets: [Snippet] {
         if searchText.isEmpty {
@@ -90,7 +91,18 @@ struct SnippetListView: View {
                 Text("\(filteredSnippets.count) snippets")
                     .font(.caption)
                     .foregroundColor(.secondary)
+                    .padding(.trailing, 8)
+
+                    Button {
+                        isShowingSettings = true
+                    } label: {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
                     .padding(.trailing, 12)
+                    .help("Settings")
             }
             .background(Color.gray.opacity(0.05))
             }

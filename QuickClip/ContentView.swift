@@ -7,13 +7,19 @@
 
 import SwiftUI
 import SwiftData
+import AppKit
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @State private var selectedSnippet: Snippet?
+    @State private var isShowingSettings: Bool = false
 
     var body: some View {
         NavigationSplitView {
-            SnippetListView(selectedSnippet: $selectedSnippet)
+            SnippetListView(
+                selectedSnippet: $selectedSnippet,
+                isShowingSettings: $isShowingSettings
+            )
                 .navigationSplitViewColumnWidth(min: 250, ideal: 300)
         } detail: {
             if let snippet = selectedSnippet {
@@ -28,6 +34,11 @@ struct ContentView: View {
                         .foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .sheet(isPresented: $isShowingSettings) {
+            SettingsView {
+                selectedSnippet = nil
             }
         }
     }
