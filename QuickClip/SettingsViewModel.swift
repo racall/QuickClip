@@ -17,6 +17,24 @@ final class SettingsViewModel: ObservableObject {
     @Published var showClearConfirmation: Bool = false
     @Published var statusMessage: String = ""
 
+    // iCloud 同步相关
+    @Published var iCloudSyncEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(iCloudSyncEnabled, forKey: "iCloudSyncEnabled")
+            if iCloudSyncEnabled {
+                Task { await enableiCloudSync() }
+            } else {
+                disableiCloudSync()
+            }
+        }
+    }
+
+    @Published var isSyncing = false
+    @Published var syncProgress: String = ""
+    @Published var lastSyncTime: Date?
+
+    private var syncManager: iCloudSyncManager?
+
     private var modelContext: ModelContext
     private var allSnippets: [Snippet]
     private let onDidClearAll: () -> Void
@@ -25,6 +43,14 @@ final class SettingsViewModel: ObservableObject {
         self.modelContext = modelContext
         self.allSnippets = allSnippets
         self.onDidClearAll = onDidClearAll
+
+        // 从 UserDefaults 加载 iCloud 开关状态
+        self.iCloudSyncEnabled = UserDefaults.standard.bool(forKey: "iCloudSyncEnabled")
+
+        // 加载最后同步时间
+        if let timestamp = UserDefaults.standard.object(forKey: "lastSyncTime") as? Date {
+            self.lastSyncTime = timestamp
+        }
     }
 
     /// 更新数据源
@@ -119,6 +145,7 @@ final class SettingsViewModel: ObservableObject {
             var importedCount = 0
             var skippedSameContentCount = 0
             var clearedShortcutCount = 0
+            var importedSnippets: [Snippet] = []  // 收集新导入的片段
 
             for item in items {
                 if existingContents.contains(item.content) {
@@ -150,10 +177,16 @@ final class SettingsViewModel: ObservableObject {
 
                 modelContext.insert(snippet)
                 existingContents.insert(item.content)
+                importedSnippets.append(snippet)  // 记录导入的片段
                 importedCount += 1
             }
 
             try modelContext.save()
+
+            // iCloud 同步：上传导入的片段
+            if !importedSnippets.isEmpty {
+                syncImportedSnippetsToiCloud(importedSnippets)
+            }
 
             var messageParts: [String] = []
             messageParts.append("Imported \(importedCount) snippets.")
@@ -182,5 +215,133 @@ final class SettingsViewModel: ObservableObject {
             return file.snippets
         }
         return try decoder.decode([SnippetExportItem].self, from: data)
+    }
+
+    // MARK: - iCloud 同步
+
+    /// 开启 iCloud 同步
+    private func enableiCloudSync() async {
+        isSyncing = true
+        statusMessage = "Enabling iCloud sync..."
+
+        do {
+            // 初始化 SyncManager
+            syncManager = iCloudSyncManager(modelContext: modelContext)
+
+            // 执行初始同步
+            let result = try await syncManager?.performFullSync()
+
+            // 保存最后同步时间
+            lastSyncTime = Date()
+            UserDefaults.standard.set(lastSyncTime, forKey: "lastSyncTime")
+
+            statusMessage = "iCloud sync enabled. \(result?.summary ?? "")"
+        } catch let error as SyncError {
+            iCloudSyncEnabled = false  // 失败时自动关闭
+            statusMessage = "Failed to enable iCloud: \(error.errorDescription ?? "Unknown error")"
+        } catch {
+            iCloudSyncEnabled = false
+            statusMessage = "Failed to enable iCloud: \(error.localizedDescription)"
+        }
+
+        isSyncing = false
+    }
+
+    /// 关闭 iCloud 同步
+    private func disableiCloudSync() {
+        syncManager = nil
+        statusMessage = "iCloud sync disabled"
+    }
+
+    /// 手动同步
+    func manualSync() async {
+        guard iCloudSyncEnabled else {
+            statusMessage = "iCloud sync is not enabled"
+            return
+        }
+
+        guard !isSyncing else {
+            statusMessage = "Sync already in progress"
+            return
+        }
+
+        isSyncing = true
+        statusMessage = "Syncing..."
+
+        do {
+            // 重新初始化 SyncManager（确保使用最新的 modelContext）
+            if syncManager == nil {
+                syncManager = iCloudSyncManager(modelContext: modelContext)
+            }
+
+            let result = try await syncManager?.performFullSync()
+
+            // 保存最后同步时间
+            lastSyncTime = Date()
+            UserDefaults.standard.set(lastSyncTime, forKey: "lastSyncTime")
+
+            statusMessage = "Sync completed. \(result?.summary ?? "")"
+        } catch let error as SyncError {
+            statusMessage = "Sync failed: \(error.errorDescription ?? "Unknown error")"
+        } catch {
+            statusMessage = "Sync failed: \(error.localizedDescription)"
+        }
+
+        isSyncing = false
+    }
+
+    /// App 启动时自动同步（如果已开启 iCloud）
+    func performStartupSyncIfEnabled() async {
+        guard iCloudSyncEnabled, !isSyncing else { return }
+
+        print("🔄 App 启动时自动同步...")
+
+        do {
+            // 初始化 SyncManager
+            if syncManager == nil {
+                syncManager = iCloudSyncManager(modelContext: modelContext)
+            }
+
+            let result = try await syncManager?.performFullSync()
+
+            // 保存最后同步时间
+            lastSyncTime = Date()
+            UserDefaults.standard.set(lastSyncTime, forKey: "lastSyncTime")
+
+            print("✅ 启动同步完成: \(result?.summary ?? "")")
+        } catch {
+            print("❌ 启动同步失败: \(error.localizedDescription)")
+        }
+    }
+
+    /// 上传导入的片段到 iCloud
+    private func syncImportedSnippetsToiCloud(_ snippets: [Snippet]) {
+        // 检查 iCloud 是否开启
+        guard iCloudSyncEnabled else {
+            return
+        }
+
+        Task { @MainActor in
+            do {
+                // 初始化 SyncManager
+                if syncManager == nil {
+                    syncManager = iCloudSyncManager(modelContext: modelContext)
+                }
+
+                var uploadedCount = 0
+                for snippet in snippets {
+                    do {
+                        try await syncManager?.uploadSnippet(snippet)
+                        uploadedCount += 1
+                    } catch {
+                        print("❌ 上传片段失败 (\(snippet.title)): \(error.localizedDescription)")
+                    }
+                }
+
+                if uploadedCount > 0 {
+                    print("✅ 已上传 \(uploadedCount) 个导入的片段到 iCloud")
+                }
+            }
+        }
     }
 }

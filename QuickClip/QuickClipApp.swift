@@ -16,7 +16,15 @@ struct QuickClipApp: App {
         let schema = Schema([
             Snippet.self,
         ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+
+        // 明确指定本地存储路径，禁用 SwiftData 自动 CloudKit 集成
+        // 我们使用手动实现的 iCloudSyncManager 进行 CloudKit 同步
+        let storeURL = URL.applicationSupportDirectory.appending(path: "QuickClip.store")
+        let modelConfiguration = ModelConfiguration(
+            schema: schema,
+            url: storeURL,
+            cloudKitDatabase: .none  // 禁用自动 CloudKit 集成
+        )
 
         do {
             return try ModelContainer(for: schema, configurations: [modelConfiguration])

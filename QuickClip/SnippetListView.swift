@@ -114,6 +114,13 @@ struct SnippetListView: View {
         modelContext.insert(newSnippet)
         pendingScrollToSnippetID = newSnippet.id
         selectedSnippet = newSnippet
+
+        // 保存到本地
+        try? modelContext.save()
+
+        // iCloud 同步：上传新片段
+        syncNewSnippetToiCloud(newSnippet)
+
         // 数据已保存，菜单会在打开时自动刷新
     }
 
@@ -122,6 +129,9 @@ struct SnippetListView: View {
 
         // 检查是否有快捷键
         let hasHotKey = snippet.shortcutKey != nil
+
+        // 保存 cloudRecordID（删除前获取）
+        let cloudRecordID = snippet.cloudRecordID
 
         // 如果当前选中的是这个片段，清除选中状态
         if selectedSnippet?.id == snippet.id {
@@ -134,12 +144,55 @@ struct SnippetListView: View {
         // 保存更改
         try? modelContext.save()
 
+        // iCloud 同步：删除云端记录
+        if let recordID = cloudRecordID {
+            deleteSnippetFromiCloud(recordID: recordID)
+        }
+
         // 如果删除的片段有快捷键，需要重新注册以清除该快捷键
         if hasHotKey {
             print("📣 Snippet has a hotkey. Posting hotkey update notification.")
             NotificationCenter.default.post(name: NSNotification.Name("HotKeysNeedUpdate"), object: nil)
         }
         // 菜单会在打开时自动刷新，无需手动通知
+    }
+
+    // MARK: - iCloud 同步
+
+    /// 上传新片段到 iCloud
+    private func syncNewSnippetToiCloud(_ snippet: Snippet) {
+        // 检查 iCloud 是否开启
+        guard UserDefaults.standard.bool(forKey: "iCloudSyncEnabled") else {
+            return
+        }
+
+        Task { @MainActor in
+            do {
+                let syncManager = iCloudSyncManager(modelContext: modelContext)
+                try await syncManager.uploadSnippet(snippet)
+                print("✅ 新片段已上传到 iCloud: \(snippet.title)")
+            } catch {
+                print("❌ 上传片段失败: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// 从 iCloud 删除片段
+    private func deleteSnippetFromiCloud(recordID: String) {
+        // 检查 iCloud 是否开启
+        guard UserDefaults.standard.bool(forKey: "iCloudSyncEnabled") else {
+            return
+        }
+
+        Task { @MainActor in
+            do {
+                let syncManager = iCloudSyncManager(modelContext: modelContext)
+                try await syncManager.deleteCloudRecord(recordName: recordID)
+                print("✅ 云端片段已删除: \(recordID)")
+            } catch {
+                print("❌ 删除云端片段失败: \(error.localizedDescription)")
+            }
+        }
     }
 }
 

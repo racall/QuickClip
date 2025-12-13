@@ -11,8 +11,12 @@ import AppKit
 import UniformTypeIdentifiers
 
 struct ContentView: View {
+    @Environment(\.modelContext) private var modelContext
+    @Query private var allSnippets: [Snippet]
+
     @State private var selectedSnippet: Snippet?
     @State private var isShowingSettings: Bool = false
+    @State private var hasPerformedStartupSync = false
 
     var body: some View {
         NavigationSplitView {
@@ -40,6 +44,20 @@ struct ContentView: View {
             SettingsView {
                 selectedSnippet = nil
             }
+        }
+        .task {
+            // App 启动时执行一次 iCloud 同步（如果已开启）
+            guard !hasPerformedStartupSync else { return }
+            hasPerformedStartupSync = true
+
+            // 创建临时 ViewModel 来执行启动同步
+            let viewModel = SettingsViewModel(
+                modelContext: modelContext,
+                allSnippets: allSnippets,
+                onDidClearAll: {}
+            )
+
+            await viewModel.performStartupSyncIfEnabled()
         }
     }
 }

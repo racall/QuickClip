@@ -18,6 +18,10 @@ final class Snippet {
     var createdAt: Date
     var updatedAt: Date
 
+    // iCloud 同步相关
+    var cloudRecordID: String?        // CloudKit 记录 ID
+    var lastSyncedAt: Date?           // 最后同步时间
+
     init(title: String = "New Snippet", content: String = "", shortcutKey: String? = nil, showInMenuBar: Bool = false) {
         self.id = UUID()
         self.title = title

@@ -128,6 +128,73 @@ struct SettingsView: View {
 
                 Divider()
 
+                // iCloud 同步区域
+                VStack(spacing: 0) {
+                    // iCloud 开关
+                    HStack(alignment: .center) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "icloud")
+                            Text("iCloud Sync")
+                                .foregroundColor(.primary)
+                        }
+                        Spacer()
+                        Toggle("", isOn: $viewModel.iCloudSyncEnabled)
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                            .disabled(viewModel.isSyncing)
+                    }
+                    .padding(12)
+
+                    // 手动同步按钮
+                    if viewModel.iCloudSyncEnabled {
+                        Divider()
+
+                        HStack(alignment: .center) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                                Text("Manual Sync")
+                                    .foregroundColor(.primary)
+                            }
+                            Spacer()
+                            Button {
+                                Task {
+                                    await viewModel.manualSync()
+                                }
+                            } label: {
+                                Text(viewModel.isSyncing ? "Syncing..." : "Sync Now")
+                            }
+                            .disabled(viewModel.isSyncing)
+                        }
+                        .padding(12)
+
+                        // 同步进度
+                        if !viewModel.syncProgress.isEmpty {
+                            HStack {
+                                Text(viewModel.syncProgress)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.bottom, 8)
+                        }
+
+                        // 最后同步时间
+                        if let lastSync = viewModel.lastSyncTime {
+                            HStack {
+                                Text("Last synced: \(lastSync, formatter: Self.dateFormatter)")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.bottom, 8)
+                        }
+                    }
+                }
+
+                Divider()
+
                 // 状态消息
                 if !viewModel.statusMessage.isEmpty {
                     HStack {
@@ -143,7 +210,7 @@ struct SettingsView: View {
                 Spacer(minLength: 0)
             }
         }
-        .frame(width: 520, height: 320)
+        .frame(width: 520, height: viewModel.iCloudSyncEnabled ? 480 : 400)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             // 使用真实的 modelContext 和 allSnippets 更新 viewModel
@@ -153,6 +220,14 @@ struct SettingsView: View {
             viewModel.updateData(modelContext: modelContext, allSnippets: allSnippets)
         }
     }
+
+    // 日期格式化器
+    private static var dateFormatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        return formatter
+    }
 }
 
 // MARK: - ModelContainer 扩展
@@ -160,8 +235,18 @@ struct SettingsView: View {
 extension ModelContainer {
     /// 共享的 ModelContainer 实例
     static var shared: ModelContainer = {
+        let schema = Schema([Snippet.self])
+
+        // 明确指定本地存储路径，禁用 SwiftData 自动 CloudKit 集成
+        let storeURL = URL.applicationSupportDirectory.appending(path: "QuickClip.store")
+        let modelConfiguration = ModelConfiguration(
+            schema: schema,
+            url: storeURL,
+            cloudKitDatabase: .none  // 禁用自动 CloudKit 集成
+        )
+
         do {
-            return try ModelContainer(for: Snippet.self)
+            return try ModelContainer(for: schema, configurations: [modelConfiguration])
         } catch {
             fatalError("Failed to create ModelContainer: \(error)")
         }
