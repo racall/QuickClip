@@ -21,9 +21,9 @@ struct SettingsView: View {
 
     init(onDidClearAll: @escaping () -> Void) {
         self.onDidClearAll = onDidClearAll
-        // 创建临时 viewModel，实际初始化在 onAppear 中完成
+        // ✅ 创建临时 viewModel，在 onAppear 中注入真实的 modelContext
         _viewModel = StateObject(wrappedValue: SettingsViewModel(
-            modelContext: ModelContext(ModelContainer.shared),
+            modelContext: nil,  // 延迟初始化
             allSnippets: [],
             onDidClearAll: onDidClearAll
         ))
@@ -228,27 +228,4 @@ struct SettingsView: View {
         formatter.timeStyle = .short
         return formatter
     }
-}
-
-// MARK: - ModelContainer 扩展
-
-extension ModelContainer {
-    /// 共享的 ModelContainer 实例
-    static var shared: ModelContainer = {
-        let schema = Schema([Snippet.self])
-
-        // 明确指定本地存储路径，禁用 SwiftData 自动 CloudKit 集成
-        let storeURL = URL.applicationSupportDirectory.appending(path: "QuickClip.store")
-        let modelConfiguration = ModelConfiguration(
-            schema: schema,
-            url: storeURL,
-            cloudKitDatabase: .none  // 禁用自动 CloudKit 集成
-        )
-
-        do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
-        } catch {
-            fatalError("Failed to create ModelContainer: \(error)")
-        }
-    }()
 }

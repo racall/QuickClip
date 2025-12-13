@@ -35,11 +35,11 @@ final class SettingsViewModel: ObservableObject {
 
     private var syncManager: iCloudSyncManager?
 
-    private var modelContext: ModelContext
+    private var modelContext: ModelContext?  // ✅ 改为可选，支持延迟初始化
     private var allSnippets: [Snippet]
     private let onDidClearAll: () -> Void
 
-    init(modelContext: ModelContext, allSnippets: [Snippet], onDidClearAll: @escaping () -> Void) {
+    init(modelContext: ModelContext?, allSnippets: [Snippet], onDidClearAll: @escaping () -> Void) {
         self.modelContext = modelContext
         self.allSnippets = allSnippets
         self.onDidClearAll = onDidClearAll
@@ -62,6 +62,11 @@ final class SettingsViewModel: ObservableObject {
     // MARK: - 清空所有数据
 
     func clearAllData() {
+        guard let modelContext = modelContext else {
+            statusMessage = "ModelContext not initialized"
+            return
+        }
+
         for snippet in allSnippets {
             modelContext.delete(snippet)
         }
@@ -121,6 +126,11 @@ final class SettingsViewModel: ObservableObject {
     // MARK: - 导入 JSON
 
     func importFromJSON() {
+        guard let modelContext = modelContext else {
+            statusMessage = "ModelContext not initialized"
+            return
+        }
+
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.json]
         panel.allowsMultipleSelection = false
@@ -221,6 +231,12 @@ final class SettingsViewModel: ObservableObject {
 
     /// 开启 iCloud 同步
     private func enableiCloudSync() async {
+        guard let modelContext = modelContext else {
+            iCloudSyncEnabled = false
+            statusMessage = "ModelContext not initialized"
+            return
+        }
+
         isSyncing = true
         statusMessage = "Enabling iCloud sync..."
 
@@ -265,6 +281,11 @@ final class SettingsViewModel: ObservableObject {
             return
         }
 
+        guard let modelContext = modelContext else {
+            statusMessage = "ModelContext not initialized"
+            return
+        }
+
         isSyncing = true
         statusMessage = "Syncing..."
 
@@ -293,6 +314,7 @@ final class SettingsViewModel: ObservableObject {
     /// App 启动时自动同步（如果已开启 iCloud）
     func performStartupSyncIfEnabled() async {
         guard iCloudSyncEnabled, !isSyncing else { return }
+        guard let modelContext = modelContext else { return }
 
         print("🔄 App 启动时自动同步...")
 
@@ -318,6 +340,10 @@ final class SettingsViewModel: ObservableObject {
     private func syncImportedSnippetsToiCloud(_ snippets: [Snippet]) {
         // 检查 iCloud 是否开启
         guard iCloudSyncEnabled else {
+            return
+        }
+
+        guard let modelContext = modelContext else {
             return
         }
 

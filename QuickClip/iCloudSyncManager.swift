@@ -184,62 +184,50 @@ final class iCloudSyncManager: ObservableObject {
 
     // MARK: - CloudKit 操作
 
-    /// 下载所有云端片段
+    /// 下载所有云端片段（使用现代 async/await API）
     private func downloadAllSnippets() async throws -> [SnippetCloudRecord] {
         let query = CKQuery(recordType: "Snippet", predicate: NSPredicate(value: true))
         // 注意：不在 CloudKit 查询中排序，避免 "Field is not marked sortable" 错误
         // 下载后在本地排序即可
 
         var allRecords: [SnippetCloudRecord] = []
-
-        // 使用游标分页获取所有记录
         var cursor: CKQueryOperation.Cursor?
 
         repeat {
-            let (results, nextCursor) = try await fetchRecords(query: query, cursor: cursor)
-            allRecords.append(contentsOf: results)
-            cursor = nextCursor
-        } while cursor != nil
-
-        // 在本地按创建时间排序（从新到旧）
-        return allRecords.sorted { $0.createdAt > $1.createdAt }
-    }
-
-    /// 获取记录（支持游标分页）
-    private func fetchRecords(query: CKQuery, cursor: CKQueryOperation.Cursor?) async throws -> ([SnippetCloudRecord], CKQueryOperation.Cursor?) {
-        return try await withCheckedThrowingContinuation { continuation in
-            let operation: CKQueryOperation
+            // ✅ 使用现代 async API
+            let (matchResults, nextCursor): ([(CKRecord.ID, Result<CKRecord, Error>)], CKQueryOperation.Cursor?)
 
             if let cursor = cursor {
-                operation = CKQueryOperation(cursor: cursor)
+                // 继续从游标获取
+                (matchResults, nextCursor) = try await privateDatabase.records(
+                    continuingMatchFrom: cursor,
+                    desiredKeys: nil
+                )
             } else {
-                operation = CKQueryOperation(query: query)
+                // 首次查询
+                (matchResults, nextCursor) = try await privateDatabase.records(
+                    matching: query,
+                    desiredKeys: nil
+                )
             }
 
-            var fetchedRecords: [SnippetCloudRecord] = []
+            cursor = nextCursor
 
-            operation.recordMatchedBlock = { recordID, result in
+            // ✅ 在主线程解析记录（避免 actor 隔离问题）
+            for (_, result) in matchResults {
                 switch result {
                 case .success(let record):
-                    if let snippetRecord = self.parseCloudKitRecord(record) {
-                        fetchedRecords.append(snippetRecord)
+                    if let snippetRecord = parseCloudKitRecord(record) {
+                        allRecords.append(snippetRecord)
                     }
                 case .failure(let error):
                     print("❌ 获取记录失败: \(error)")
                 }
             }
+        } while cursor != nil
 
-            operation.queryResultBlock = { result in
-                switch result {
-                case .success(let cursor):
-                    continuation.resume(returning: (fetchedRecords, cursor))
-                case .failure(let error):
-                    continuation.resume(throwing: error)
-                }
-            }
-
-            privateDatabase.add(operation)
-        }
+        // 在本地按创建时间排序（从新到旧）
+        return allRecords.sorted { $0.createdAt > $1.createdAt }
     }
 
     /// 解析 CloudKit 记录

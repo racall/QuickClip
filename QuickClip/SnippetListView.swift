@@ -14,6 +14,9 @@ struct SnippetListView: View {
 
     @State private var searchText: String = ""
     @State private var pendingScrollToSnippetID: UUID?
+    @State private var cloudDeleteError: String?  // 云端删除错误消息
+    @State private var showCloudDeleteError = false  // 显示错误对话框
+    @State private var deletingSnippetIDs: Set<UUID> = []  // 正在删除的片段 ID 集合
     @Binding var selectedSnippet: Snippet?
     @Binding var isShowingSettings: Bool
 
@@ -57,6 +60,7 @@ struct SnippetListView: View {
                     ForEach(filteredSnippets) { snippet in
                         SnippetRowView(
                             snippet: snippet,
+                            isDeleting: deletingSnippetIDs.contains(snippet.id),
                             onDelete: { deleteSnippet(snippet) }
                         )
                         .id(snippet.id)
@@ -107,6 +111,11 @@ struct SnippetListView: View {
             .background(Color.gray.opacity(0.05))
             }
         }
+        .alert("Failed to Delete from iCloud", isPresented: $showCloudDeleteError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Could not delete snippet from iCloud: \(cloudDeleteError ?? "Unknown error"). The local copy has been preserved. Please try again later or check your network connection.")
+        }
     }
 
     private func addNewSnippet() {
@@ -127,29 +136,52 @@ struct SnippetListView: View {
     private func deleteSnippet(_ snippet: Snippet) {
         print("🗑️ Delete snippet: \(snippet.title)")
 
-        // 检查是否有快捷键
         let hasHotKey = snippet.shortcutKey != nil
-
-        // 保存 cloudRecordID（删除前获取）
         let cloudRecordID = snippet.cloudRecordID
+        let snippetID = snippet.id
 
         // 如果当前选中的是这个片段，清除选中状态
         if selectedSnippet?.id == snippet.id {
             selectedSnippet = nil
         }
 
-        // 删除片段
-        modelContext.delete(snippet)
+        // ✅ 先尝试删除云端（如果有记录且 iCloud 已开启）
+        if let recordID = cloudRecordID, UserDefaults.standard.bool(forKey: "iCloudSyncEnabled") {
+            // ✅ 标记为正在删除
+            deletingSnippetIDs.insert(snippetID)
 
-        // 保存更改
+            Task { @MainActor in
+                do {
+                    let syncManager = iCloudSyncManager(modelContext: modelContext)
+                    try await syncManager.deleteCloudRecord(recordName: recordID)
+                    print("✅ 云端记录已删除: \(recordID)")
+
+                    // ✅ 云端删除成功，再删除本地
+                    deleteSnippetLocally(snippet, hasHotKey: hasHotKey)
+
+                    // ✅ 移除删除标记
+                    deletingSnippetIDs.remove(snippetID)
+                } catch {
+                    print("❌ 删除云端片段失败: \(error.localizedDescription)")
+                    // ✅ 移除删除标记
+                    deletingSnippetIDs.remove(snippetID)
+
+                    // ✅ 云端删除失败，显示错误提示，不删除本地
+                    cloudDeleteError = error.localizedDescription
+                    showCloudDeleteError = true
+                }
+            }
+        } else {
+            // 没有云端记录或 iCloud 未开启，直接删除本地
+            deleteSnippetLocally(snippet, hasHotKey: hasHotKey)
+        }
+    }
+
+    /// 删除本地片段
+    private func deleteSnippetLocally(_ snippet: Snippet, hasHotKey: Bool) {
+        modelContext.delete(snippet)
         try? modelContext.save()
 
-        // iCloud 同步：删除云端记录
-        if let recordID = cloudRecordID {
-            deleteSnippetFromiCloud(recordID: recordID)
-        }
-
-        // 如果删除的片段有快捷键，需要重新注册以清除该快捷键
         if hasHotKey {
             print("📣 Snippet has a hotkey. Posting hotkey update notification.")
             NotificationCenter.default.post(name: NSNotification.Name("HotKeysNeedUpdate"), object: nil)
@@ -176,28 +208,11 @@ struct SnippetListView: View {
             }
         }
     }
-
-    /// 从 iCloud 删除片段
-    private func deleteSnippetFromiCloud(recordID: String) {
-        // 检查 iCloud 是否开启
-        guard UserDefaults.standard.bool(forKey: "iCloudSyncEnabled") else {
-            return
-        }
-
-        Task { @MainActor in
-            do {
-                let syncManager = iCloudSyncManager(modelContext: modelContext)
-                try await syncManager.deleteCloudRecord(recordName: recordID)
-                print("✅ 云端片段已删除: \(recordID)")
-            } catch {
-                print("❌ 删除云端片段失败: \(error.localizedDescription)")
-            }
-        }
-    }
 }
 
 struct SnippetRowView: View {
     let snippet: Snippet
+    let isDeleting: Bool  // ✅ 是否正在删除
     let onDelete: () -> Void
 
     @State private var isHovering = false
@@ -209,6 +224,7 @@ struct SnippetRowView: View {
                 .font(.headline)
                 .foregroundColor(snippet.title.isEmpty ? .secondary : .primary)
                 .lineLimit(1)
+                .opacity(isDeleting ? 0.5 : 1.0)  // ✅ 删除时半透明
 
             Spacer()
 
@@ -219,10 +235,17 @@ struct SnippetRowView: View {
                     .padding(.vertical, 2)
                     .background(Color.accentColor.opacity(0.2))
                     .cornerRadius(4)
+                    .opacity(isDeleting ? 0.5 : 1.0)  // ✅ 删除时半透明
             }
 
-            // 悬停时显示删除按钮
-            if isHovering {
+            // ✅ 正在删除时显示 loading 指示器
+            if isDeleting {
+                ProgressView()
+                    .scaleEffect(0.7)
+                    .frame(width: 20, height: 20)
+            }
+            // 悬停时显示删除按钮（非删除状态）
+            else if isHovering {
                 Button {
                     showDeleteConfirmation = true
                 } label: {
@@ -242,6 +265,7 @@ struct SnippetRowView: View {
                 isHovering = hovering
             }
         }
+        .disabled(isDeleting)  // ✅ 删除时禁用交互
         .confirmationDialog(
             "Confirm deletion",
             isPresented: $showDeleteConfirmation,
