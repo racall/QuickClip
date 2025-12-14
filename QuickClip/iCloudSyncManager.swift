@@ -169,6 +169,7 @@ final class iCloudSyncManager: ObservableObject {
         // 更新本地片段的 cloudRecordID
         snippet.cloudRecordID = savedRecord.recordID.recordName
         snippet.lastSyncedAt = Date()
+        snippet.needsSync = false
 
         try modelContext.save()
 
@@ -180,6 +181,41 @@ final class iCloudSyncManager: ObservableObject {
         let recordID = CKRecord.ID(recordName: recordName)
         try await privateDatabase.deleteRecord(withID: recordID)
         print("✅ 云端记录已删除: \(recordName)")
+    }
+
+    /// 更新单个片段到 iCloud（修改片段时使用）
+    func updateSnippet(_ snippet: Snippet) async throws {
+        // 检查账户状态
+        try await checkAccountStatus()
+
+        // 如果是新片段（没有 cloudRecordID），直接上传
+        guard let recordName = snippet.cloudRecordID else {
+            try await uploadSnippet(snippet)
+            return
+        }
+
+        // 先从云端获取已有记录
+        let recordID = CKRecord.ID(recordName: recordName)
+        let record = try await privateDatabase.record(for: recordID)
+
+        // 修改记录字段
+        record["snippetID"] = snippet.id.uuidString
+        record["title"] = snippet.title
+        record["content"] = snippet.content
+        record["shortcutKey"] = snippet.shortcutKey
+        record["showInMenuBar"] = (snippet.showInMenuBar ?? false) ? 1 : 0
+        record["createdAt"] = snippet.createdAt
+        record["updatedAt"] = snippet.updatedAt
+
+        // 保存到 iCloud
+        _ = try await privateDatabase.save(record)
+
+        // 更新本地同步状态
+        snippet.needsSync = false
+        snippet.lastSyncedAt = Date()
+        try modelContext.save()
+
+        print("✅ 片段已更新: \(snippet.title)")
     }
 
     // MARK: - CloudKit 操作
@@ -258,25 +294,47 @@ final class iCloudSyncManager: ObservableObject {
         )
     }
 
-    /// 上传本地独有片段到云端
+    /// 上传本地独有片段和已修改片段到云端
     private func uploadLocalSnippets() async throws -> Int {
         let descriptor = FetchDescriptor<Snippet>()
         let allSnippets = try modelContext.fetch(descriptor)
 
-        // 筛选出未同步的片段（cloudRecordID 为空）
-        let unSyncedSnippets = allSnippets.filter { $0.cloudRecordID == nil }
+        // 筛选出需要同步的片段：1. 新片段（cloudRecordID 为空）2. 已修改片段（needsSync == true）
+        let snippetsToSync = allSnippets.filter {
+            $0.cloudRecordID == nil || $0.needsSync == true
+        }
 
-        guard !unSyncedSnippets.isEmpty else {
+        guard !snippetsToSync.isEmpty else {
             return 0
         }
 
         var uploadedCount = 0
 
-        // 批量上传（每批最多 400 个，CloudKit 限制）
+        // 分为新增和更新两组
+        let newSnippets = snippetsToSync.filter { $0.cloudRecordID == nil }
+        let updatedSnippets = snippetsToSync.filter { $0.cloudRecordID != nil && $0.needsSync == true }
+
+        // 批量上传新片段
+        if !newSnippets.isEmpty {
+            uploadedCount += try await batchUploadNewSnippets(newSnippets, allSnippets: allSnippets)
+        }
+
+        // 批量更新已有片段
+        if !updatedSnippets.isEmpty {
+            uploadedCount += try await batchUpdateExistingSnippets(updatedSnippets)
+        }
+
+        return uploadedCount
+    }
+
+    /// 批量上传新片段
+    private func batchUploadNewSnippets(_ snippets: [Snippet], allSnippets: [Snippet]) async throws -> Int {
+        var uploadedCount = 0
         let batchSize = 400
-        for i in stride(from: 0, to: unSyncedSnippets.count, by: batchSize) {
-            let end = min(i + batchSize, unSyncedSnippets.count)
-            let batch = Array(unSyncedSnippets[i..<end])
+
+        for i in stride(from: 0, to: snippets.count, by: batchSize) {
+            let end = min(i + batchSize, snippets.count)
+            let batch = Array(snippets[i..<end])
 
             let records = batch.map { createCloudKitRecord(from: $0) }
 
@@ -308,13 +366,14 @@ final class iCloudSyncManager: ObservableObject {
                 privateDatabase.add(operation)
             }
 
-            // 更新本地 Snippet 的 cloudRecordID
+            // 更新本地 Snippet 的 cloudRecordID 和同步状态
             for record in savedRecords {
                 if let snippetID = record["snippetID"] as? String,
                    let uuid = UUID(uuidString: snippetID),
                    let snippet = allSnippets.first(where: { $0.id == uuid }) {
                     snippet.cloudRecordID = record.recordID.recordName
                     snippet.lastSyncedAt = Date()
+                    snippet.needsSync = false
                 }
             }
 
@@ -322,8 +381,96 @@ final class iCloudSyncManager: ObservableObject {
         }
 
         try modelContext.save()
-
         return uploadedCount
+    }
+
+    /// 批量更新已有片段
+    private func batchUpdateExistingSnippets(_ snippets: [Snippet]) async throws -> Int {
+        var updatedCount = 0
+        let batchSize = 400
+
+        for i in stride(from: 0, to: snippets.count, by: batchSize) {
+            let end = min(i + batchSize, snippets.count)
+            let batch = Array(snippets[i..<end])
+
+            // 1. 先批量获取云端记录
+            let recordIDs = batch.compactMap { snippet -> CKRecord.ID? in
+                guard let recordName = snippet.cloudRecordID else { return nil }
+                return CKRecord.ID(recordName: recordName)
+            }
+
+            guard !recordIDs.isEmpty else { continue }
+
+            // 使用现代 API 批量获取记录
+            let fetchResults = try await privateDatabase.records(for: recordIDs, desiredKeys: nil)
+
+            // 2. 修改获取到的记录
+            var recordsToSave: [CKRecord] = []
+            for (recordID, result) in fetchResults {
+                switch result {
+                case .success(let record):
+                    // 找到对应的 snippet
+                    if let snippet = batch.first(where: { $0.cloudRecordID == recordID.recordName }) {
+                        record["snippetID"] = snippet.id.uuidString
+                        record["title"] = snippet.title
+                        record["content"] = snippet.content
+                        record["shortcutKey"] = snippet.shortcutKey
+                        record["showInMenuBar"] = (snippet.showInMenuBar ?? false) ? 1 : 0
+                        record["createdAt"] = snippet.createdAt
+                        record["updatedAt"] = snippet.updatedAt
+                        recordsToSave.append(record)
+                    }
+                case .failure(let error):
+                    print("❌ 获取记录失败 \(recordID): \(error)")
+                }
+            }
+
+            guard !recordsToSave.isEmpty else { continue }
+
+            // 3. 批量保存
+            let operation = CKModifyRecordsOperation(recordsToSave: recordsToSave, recordIDsToDelete: nil)
+            operation.savePolicy = .changedKeys
+            operation.qualityOfService = .userInitiated
+
+            let savedRecords = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[CKRecord], Error>) in
+                var savedRecords: [CKRecord] = []
+
+                operation.perRecordSaveBlock = { recordID, result in
+                    switch result {
+                    case .success(let record):
+                        savedRecords.append(record)
+                    case .failure(let error):
+                        print("❌ 更新记录失败 \(recordID): \(error)")
+                    }
+                }
+
+                operation.modifyRecordsResultBlock = { result in
+                    switch result {
+                    case .success:
+                        continuation.resume(returning: savedRecords)
+                    case .failure(let error):
+                        continuation.resume(throwing: error)
+                    }
+                }
+
+                privateDatabase.add(operation)
+            }
+
+            // 更新本地 Snippet 的同步状态
+            for record in savedRecords {
+                if let snippetID = record["snippetID"] as? String,
+                   let uuid = UUID(uuidString: snippetID),
+                   let snippet = batch.first(where: { $0.id == uuid }) {
+                    snippet.needsSync = false
+                    snippet.lastSyncedAt = Date()
+                }
+            }
+
+            updatedCount += savedRecords.count
+        }
+
+        try modelContext.save()
+        return updatedCount
     }
 
     /// 创建 CloudKit 记录

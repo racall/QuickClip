@@ -34,6 +34,7 @@ final class SettingsViewModel: ObservableObject {
     @Published var lastSyncTime: Date?
 
     private var syncManager: iCloudSyncManager?
+    private var progressCancellable: AnyCancellable?  // ✅ Combine 订阅
 
     private var modelContext: ModelContext?  // ✅ 改为可选，支持延迟初始化
     private var allSnippets: [Snippet]
@@ -244,6 +245,11 @@ final class SettingsViewModel: ObservableObject {
             // 初始化 SyncManager
             syncManager = iCloudSyncManager(modelContext: modelContext)
 
+            // ✅ 绑定进度更新
+            progressCancellable = syncManager?.$syncProgress
+                .receive(on: DispatchQueue.main)
+                .assign(to: \.syncProgress, on: self)
+
             // 执行初始同步
             let result = try await syncManager?.performFullSync()
 
@@ -265,7 +271,12 @@ final class SettingsViewModel: ObservableObject {
 
     /// 关闭 iCloud 同步
     private func disableiCloudSync() {
+        // ✅ 取消进度绑定
+        progressCancellable?.cancel()
+        progressCancellable = nil
+
         syncManager = nil
+        syncProgress = ""  // ✅ 清空进度文本
         statusMessage = "iCloud sync disabled"
     }
 
@@ -293,6 +304,11 @@ final class SettingsViewModel: ObservableObject {
             // 重新初始化 SyncManager（确保使用最新的 modelContext）
             if syncManager == nil {
                 syncManager = iCloudSyncManager(modelContext: modelContext)
+
+                // ✅ 绑定进度更新
+                progressCancellable = syncManager?.$syncProgress
+                    .receive(on: DispatchQueue.main)
+                    .assign(to: \.syncProgress, on: self)
             }
 
             let result = try await syncManager?.performFullSync()
@@ -322,6 +338,11 @@ final class SettingsViewModel: ObservableObject {
             // 初始化 SyncManager
             if syncManager == nil {
                 syncManager = iCloudSyncManager(modelContext: modelContext)
+
+                // ✅ 绑定进度更新
+                progressCancellable = syncManager?.$syncProgress
+                    .receive(on: DispatchQueue.main)
+                    .assign(to: \.syncProgress, on: self)
             }
 
             let result = try await syncManager?.performFullSync()

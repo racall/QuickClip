@@ -253,6 +253,7 @@ struct SnippetRowView: View {
                         .foregroundColor(.red)
                         .font(.system(size: 14))
                 }
+                .pointerStyle(.link)
                 .buttonStyle(.plain)
                 .help("Delete snippet")
             }

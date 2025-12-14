@@ -7,6 +7,7 @@
 
 import SwiftUI
 import SwiftData
+import CloudKit
 
 @main
 struct QuickClipApp: App {
@@ -59,6 +60,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 设置窗口关闭行为为隐藏而不是退出
         NSApplication.shared.windows.first?.delegate = self
+
+        // 上传用户统计数据
+        Task {
+            await uploadUsageStats()
+        }
+    }
+
+    /// 上传用户统计数据到 CloudKit Public Database
+    private func uploadUsageStats() async {
+        let statsManager = UsageStatsManager()
+        do {
+            try await statsManager.uploadOrUpdateStats()
+        } catch let error as CKError {
+            // CloudKit 错误，静默失败
+            switch error.code {
+            case .notAuthenticated:
+                print("⚠️ 用户未登录 iCloud，跳过统计上传")
+            case .networkUnavailable, .networkFailure:
+                print("⚠️ 网络不可用，跳过统计上传")
+            default:
+                print("⚠️ 统计上传失败: \(error.localizedDescription)")
+            }
+        } catch {
+            print("⚠️ 统计上传失败: \(error.localizedDescription)")
+        }
     }
 
     func setupManagers(modelContainer: ModelContainer) {

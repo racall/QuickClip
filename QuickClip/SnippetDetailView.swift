@@ -15,6 +15,7 @@ struct SnippetDetailView: View {
     @State private var updateTask: Task<Void, Never>?
     @State private var isCopied: Bool = false
     @State private var isHoveringShortcut: Bool = false
+    @State private var syncWorkItem: DispatchWorkItem?  // 延迟同步任务
     
     private var showInMenuBarBinding: Binding<Bool> {
         Binding(
@@ -213,7 +214,56 @@ struct SnippetDetailView: View {
 
             // 取消未完成的任务
             updateTask?.cancel()
+
+            // 取消延迟同步任务
+            syncWorkItem?.cancel()
         }
+        .onChange(of: snippet.title) { _, _ in
+            markNeedsSyncAndScheduleUpload()
+        }
+        .onChange(of: snippet.content) { _, _ in
+            markNeedsSyncAndScheduleUpload()
+        }
+        .onChange(of: snippet.shortcutKey) { _, _ in
+            markNeedsSyncAndScheduleUpload()
+        }
+        .onChange(of: snippet.showInMenuBar) { _, _ in
+            markNeedsSyncAndScheduleUpload()
+        }
+    }
+
+    /// 标记需要同步并触发延迟上传（3秒后）
+    private func markNeedsSyncAndScheduleUpload() {
+        snippet.needsSync = true
+        snippet.updatedAt = Date()
+        try? modelContext.save()
+
+        // 检查 iCloud 是否开启
+        guard UserDefaults.standard.bool(forKey: "iCloudSyncEnabled") else {
+            return
+        }
+
+        // 取消之前的延迟任务
+        syncWorkItem?.cancel()
+
+        // 创建新的延迟任务（3秒后执行）
+        let workItem = DispatchWorkItem { [weak modelContext, snippet] in
+            guard let modelContext = modelContext else { return }
+
+            Task { @MainActor in
+                do {
+                    let syncManager = iCloudSyncManager(modelContext: modelContext)
+                    try await syncManager.updateSnippet(snippet)
+                    print("✅ 延迟同步完成: \(snippet.title)")
+                } catch {
+                    print("❌ 延迟同步失败: \(error.localizedDescription)")
+                    // 保持 needsSync = true，下次完整同步时会重试
+                }
+            }
+        }
+
+        syncWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: workItem)
     }
 }
 

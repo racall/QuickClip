@@ -21,6 +21,7 @@ final class Snippet {
     // iCloud 同步相关
     var cloudRecordID: String?        // CloudKit 记录 ID
     var lastSyncedAt: Date?           // 最后同步时间
+    var needsSync: Bool = false       // 是否需要同步到 iCloud
 
     init(title: String = "New Snippet", content: String = "", shortcutKey: String? = nil, showInMenuBar: Bool = false) {
         self.id = UUID()
@@ -30,6 +31,7 @@ final class Snippet {
         self.showInMenuBar = showInMenuBar
         self.createdAt = Date()
         self.updatedAt = Date()
+        self.needsSync = false
     }
 
     func updateContent(title: String? = nil, content: String? = nil, shortcutKey: String? = nil, showInMenuBar: Bool? = nil) {
