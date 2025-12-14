@@ -31,28 +31,60 @@ final class UsageStatsManager {
 
     // MARK: - 公开接口
 
-    /// 上传或更新统计数据
+    /// 上传或更新统计数据（三层检查机制）
     func uploadOrUpdateStats() async throws {
-        // 检查是否已有记录
+        // 第一层：尝试使用本地缓存的recordName
         if let recordName = UserDefaults.standard.string(forKey: recordNameKey) {
-            // 已有记录，执行更新
             do {
                 try await updateExistingRecord(recordName: recordName)
-                print("✅ 用户统计数据已更新")
+                print("✅ 用户统计数据已更新（使用缓存recordName）")
+                return
             } catch let error as CKError where error.code == .unknownItem {
-                // 记录不存在（被删除），清除缓存并重新创建
-                print("⚠️ 统计记录不存在，重新创建")
+                print("⚠️ 本地缓存的recordName无效，清除缓存")
                 UserDefaults.standard.removeObject(forKey: recordNameKey)
-                try await createNewRecord()
+                // 继续向下执行第二层检查
             }
-        } else {
-            // 首次启动，创建新记录
-            try await createNewRecord()
-            print("✅ 用户统计数据已创建")
         }
+
+        // 第二层：查询CloudKit是否已有该uid的记录
+        let userRecordID = try await container.userRecordID()
+        let uid = md5(userRecordID.recordName)
+
+        if let existingRecord = try await queryRecordByUID(uid: uid) {
+            // 找到了已有记录，保存recordName并更新
+            let recordName = existingRecord.recordID.recordName
+            UserDefaults.standard.set(recordName, forKey: recordNameKey)
+            print("✅ 找到已有记录，恢复本地缓存: \(recordName)")
+
+            // 更新记录
+            try await updateExistingRecord(recordName: recordName)
+            print("✅ 用户统计数据已更新（从CloudKit恢复）")
+            return
+        }
+
+        // 第三层：确实是新用户，创建新记录
+        try await createNewRecord()
+        print("✅ 用户统计数据已创建（新用户）")
     }
 
     // MARK: - 私有方法
+
+    /// 根据uid查询CloudKit中是否已有记录
+    private func queryRecordByUID(uid: String) async throws -> CKRecord? {
+        let predicate = NSPredicate(format: "uid == %@", uid)
+        let query = CKQuery(recordType: "UsingUsers", predicate: predicate)
+
+        let results = try await publicDatabase.records(matching: query)
+
+        // 返回第一条匹配的记录（理论上只应该有一条）
+        for (_, result) in results.matchResults {
+            if let record = try? result.get() {
+                return record
+            }
+        }
+
+        return nil
+    }
 
     /// 创建新的统计记录（首次启动）
     private func createNewRecord() async throws {
@@ -68,15 +100,19 @@ final class UsageStatsManager {
         let appVersion = getAppVersion()
         let now = Date()
 
-        // 4. 创建 CloudKit 记录
+        // 4. 获取 APNs Device Token（如果有）
+        let deviceToken = PushNotificationManager.shared.deviceToken
+
+        // 5. 创建 CloudKit 记录
         let record = CKRecord(recordType: "UsingUsers")
         record["uid"] = uid
         record["os"] = osVersion
         record["sv"] = appVersion
         record["firstSendDate"] = now
         record["sendDate"] = now
+        record["token"] = deviceToken  // APNs Device Token
 
-        // 5. 保存到 CloudKit Public Database
+        // 6. 保存到 CloudKit Public Database
         let savedRecord = try await publicDatabase.save(record)
 
         // 6. 保存 recordName 到 UserDefaults
@@ -96,10 +132,15 @@ final class UsageStatsManager {
         record["sv"] = getAppVersion()
         record["sendDate"] = Date()
 
-        // 3. 保存到 CloudKit
+        // 3. 更新 APNs Device Token（无论是否为nil都更新）
+        // 如果当前有token就更新，如果没有就保持原值或设为nil（后续会通过监听更新）
+        record["token"] = PushNotificationManager.shared.deviceToken
+
+        // 4. 保存到 CloudKit
         _ = try await publicDatabase.save(record)
 
-        print("📊 统计数据已更新: os=\(getOSVersion()), sv=\(getAppVersion())")
+        let tokenStatus = PushNotificationManager.shared.deviceToken ?? "nil"
+        print("📊 统计数据已更新: os=\(getOSVersion()), sv=\(getAppVersion()), token=\(tokenStatus)")
     }
 
     /// 获取系统版本

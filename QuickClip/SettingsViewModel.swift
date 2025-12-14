@@ -10,12 +10,16 @@ import SwiftData
 import AppKit
 import UniformTypeIdentifiers
 import Combine
+import UserNotifications
 
 /// 设置界面业务逻辑
 @MainActor
 final class SettingsViewModel: ObservableObject {
     @Published var showClearConfirmation: Bool = false
     @Published var statusMessage: String = ""
+
+    // 通知权限相关
+    @Published var notificationAuthorizationStatus: UNAuthorizationStatus = .notDetermined
 
     // iCloud 同步相关
     @Published var iCloudSyncEnabled: Bool {
@@ -35,6 +39,10 @@ final class SettingsViewModel: ObservableObject {
 
     private var syncManager: iCloudSyncManager?
     private var progressCancellable: AnyCancellable?  // ✅ Combine 订阅
+
+    // 通知权限检测相关
+    private var authCheckTimer: Timer?  // 权限检测定时器
+    private var authCheckCount = 0  // 已检测次数
 
     private var modelContext: ModelContext?  // ✅ 改为可选，支持延迟初始化
     private var allSnippets: [Snippet]
@@ -390,5 +398,72 @@ final class SettingsViewModel: ObservableObject {
                 }
             }
         }
+    }
+
+    // MARK: - 通知权限管理
+
+    /// 检查通知权限状态
+    func checkNotificationAuthorization() async {
+        let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
+        notificationAuthorizationStatus = settings.authorizationStatus
+    }
+
+    /// 打开系统通知设置
+    func openNotificationSettings() {
+        // 打开 macOS 系统设置中该应用的通知设置页面
+        if let appName = Bundle.main.object(forInfoDictionaryKey: "CFBundleIdentifier") as? String {
+            let urlString = "x-apple.systempreferences:com.apple.preference.notifications?id=\(appName)"
+            if let url = URL(string: urlString) {
+                NSWorkspace.shared.open(url)
+            }
+        }
+
+        // 开始定时检测权限
+        startPeriodicAuthorizationCheck()
+    }
+
+    /// 开始定期检测权限状态
+    private func startPeriodicAuthorizationCheck() {
+        // 停止之前的定时器
+        stopPeriodicAuthorizationCheck()
+
+        // 重置计数
+        authCheckCount = 0
+
+        // 每 5 秒检测一次
+        authCheckTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+
+            Task { @MainActor in
+                await self.checkNotificationAuthorization()
+
+                // 如果已授权，停止检测
+                if self.notificationAuthorizationStatus == .authorized {
+                    self.stopPeriodicAuthorizationCheck()
+                    return
+                }
+
+                // 增加检测计数
+                self.authCheckCount += 1
+
+                // 检测 10 次后停止
+                if self.authCheckCount >= 10 {
+                    self.stopPeriodicAuthorizationCheck()
+                }
+            }
+        }
+    }
+
+    /// 停止定期检测
+    private func stopPeriodicAuthorizationCheck() {
+        authCheckTimer?.invalidate()
+        authCheckTimer = nil
+        authCheckCount = 0
+    }
+
+    /// 清理资源
+    deinit {
+        authCheckTimer?.invalidate()
     }
 }

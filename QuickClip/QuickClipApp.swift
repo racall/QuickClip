@@ -8,6 +8,7 @@
 import SwiftUI
 import SwiftData
 import CloudKit
+import UserNotifications
 
 @main
 struct QuickClipApp: App {
@@ -52,7 +53,7 @@ struct QuickClipApp: App {
     }
 }
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate,UNUserNotificationCenterDelegate {
     private var menuBarManager: MenuBarManager?
     private var hotKeyManager: HotKeyManager?
     weak var mainWindow: NSWindow?
@@ -60,11 +61,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 设置窗口关闭行为为隐藏而不是退出
         NSApplication.shared.windows.first?.delegate = self
+        UNUserNotificationCenter.current().delegate = self
+        // 注册 APNs
+        PushNotificationManager.shared.registerForRemoteNotifications()
 
-        // 上传用户统计数据
-        Task {
-            await uploadUsageStats()
-        }
     }
 
     /// 上传用户统计数据到 CloudKit Public Database
@@ -72,16 +72,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let statsManager = UsageStatsManager()
         do {
             try await statsManager.uploadOrUpdateStats()
-        } catch let error as CKError {
-            // CloudKit 错误，静默失败
-            switch error.code {
-            case .notAuthenticated:
-                print("⚠️ 用户未登录 iCloud，跳过统计上传")
-            case .networkUnavailable, .networkFailure:
-                print("⚠️ 网络不可用，跳过统计上传")
-            default:
-                print("⚠️ 统计上传失败: \(error.localizedDescription)")
-            }
         } catch {
             print("⚠️ 统计上传失败: \(error.localizedDescription)")
         }
@@ -135,6 +125,40 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             app.activate(ignoringOtherApps: true)
             window?.makeKeyAndOrderFront(nil)
         }
+    }
+
+    // MARK: - APNs Delegate Methods
+    
+    // ⭐ 关键：前台也展示通知
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                willPresent notification: UNNotification) async
+        -> UNNotificationPresentationOptions {
+        return [.banner, .sound, .list]
+    }
+    
+    /// APNs 注册成功
+    func application(_ application: NSApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        print("✅ APNs 注册成功，设备令牌已接收")
+        PushNotificationManager.shared.didRegisterForRemoteNotifications(withDeviceToken: deviceToken)
+        // 上传用户统计数据
+        Task {
+            await uploadUsageStats()
+        }
+    }
+
+    /// APNs 注册失败
+    func application(_ application: NSApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        print("❌ APNs 注册失败 \(error.localizedDescription)")
+        PushNotificationManager.shared.didFailToRegisterForRemoteNotifications(withError: error)
+        // 上传用户统计数据
+        Task {
+            await uploadUsageStats()
+        }
+    }
+
+    /// 接收远程通知
+    func application(_ application: NSApplication, didReceiveRemoteNotification userInfo: [String: Any]) {
+        PushNotificationManager.shared.didReceiveRemoteNotification(userInfo)
     }
 }
 

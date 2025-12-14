@@ -7,6 +7,7 @@
 
 import SwiftUI
 import SwiftData
+import UserNotifications
 
 /// 设置界面视图
 struct SettingsView: View {
@@ -60,6 +61,31 @@ struct SettingsView: View {
 
             // 主内容区
             VStack(spacing: 0) {
+                // 通知权限
+                HStack(alignment: .center) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "bell.badge")
+                        Text("Notification Permission")
+                            .foregroundColor(.primary)
+                    }
+                    Spacer()
+
+                    // 根据权限状态显示不同的UI
+                    if viewModel.notificationAuthorizationStatus == .authorized {
+                        Text("Enabled")
+                            .foregroundColor(.green)
+                    } else {
+                        Button {
+                            viewModel.openNotificationSettings()
+                        } label: {
+                            Text("Open Settings")
+                        }
+                    }
+                }
+                .padding(12)
+
+                Divider()
+
                 // 清空数据
                 HStack(alignment: .center) {
                     HStack(spacing:4){
@@ -215,6 +241,11 @@ struct SettingsView: View {
         .onAppear {
             // 使用真实的 modelContext 和 allSnippets 更新 viewModel
             viewModel.updateData(modelContext: modelContext, allSnippets: allSnippets)
+
+            // 检查通知权限状态
+            Task {
+                await viewModel.checkNotificationAuthorization()
+            }
         }
         .onChange(of: allSnippets) { _, _ in
             viewModel.updateData(modelContext: modelContext, allSnippets: allSnippets)
