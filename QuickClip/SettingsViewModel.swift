@@ -11,12 +11,27 @@ import AppKit
 import UniformTypeIdentifiers
 import Combine
 import UserNotifications
+import ServiceManagement
 
 /// 设置界面业务逻辑
 @MainActor
 final class SettingsViewModel: ObservableObject {
     @Published var showClearConfirmation: Bool = false
     @Published var statusMessage: String = ""
+
+    // 开机自启相关
+    @Published var launchAtLoginEnabled: Bool {
+        didSet {
+            guard !isUpdatingLaunchAtLoginEnabled else { return }
+            UserDefaults.standard.set(launchAtLoginEnabled, forKey: Self.launchAtLoginEnabledUserDefaultsKey)
+
+            let previousValue = oldValue
+            Task { await updateLaunchAtLoginSetting(desiredValue: launchAtLoginEnabled, previousValue: previousValue) }
+        }
+    }
+
+    @Published var showLaunchAtLoginErrorAlert: Bool = false
+    @Published var launchAtLoginErrorMessage: String = ""
 
     // 通知权限相关
     @Published var notificationAuthorizationStatus: UNAuthorizationStatus = .notDetermined
@@ -43,15 +58,21 @@ final class SettingsViewModel: ObservableObject {
     // 通知权限检测相关
     private var authCheckTimer: Timer?  // 权限检测定时器
     private var authCheckCount = 0  // 已检测次数
+    private var isUpdatingLaunchAtLoginEnabled: Bool = false
 
     private var modelContext: ModelContext?  // ✅ 改为可选，支持延迟初始化
     private var allSnippets: [Snippet]
     private let onDidClearAll: () -> Void
 
+    private static let launchAtLoginEnabledUserDefaultsKey = "launchAtLoginEnabled"
+
     init(modelContext: ModelContext?, allSnippets: [Snippet], onDidClearAll: @escaping () -> Void) {
         self.modelContext = modelContext
         self.allSnippets = allSnippets
         self.onDidClearAll = onDidClearAll
+
+        // 从 UserDefaults 加载开机自启开关状态
+        self.launchAtLoginEnabled = UserDefaults.standard.bool(forKey: Self.launchAtLoginEnabledUserDefaultsKey)
 
         // 从 UserDefaults 加载 iCloud 开关状态
         self.iCloudSyncEnabled = UserDefaults.standard.bool(forKey: "iCloudSyncEnabled")
@@ -66,6 +87,44 @@ final class SettingsViewModel: ObservableObject {
     func updateData(modelContext: ModelContext, allSnippets: [Snippet]) {
         self.modelContext = modelContext
         self.allSnippets = allSnippets
+    }
+
+    // MARK: - 开机自启（Login Item）
+
+    /// 刷新开机自启状态（以系统为准）
+    func refreshLaunchAtLoginStatus() {
+        let isEnabledInSystem = (SMAppService.mainApp.status == .enabled)
+        setLaunchAtLoginEnabledProgrammatically(isEnabledInSystem)
+    }
+
+    private func updateLaunchAtLoginSetting(desiredValue: Bool, previousValue: Bool) async {
+        do {
+            if desiredValue {
+                try SMAppService.mainApp.register()
+            } else {
+                try await SMAppService.mainApp.unregister()
+            }
+        } catch {
+            launchAtLoginErrorMessage = "Failed to update the login item. Please check System Settings > General > Login Items."
+            showLaunchAtLoginErrorAlert = true
+            setLaunchAtLoginEnabledProgrammatically(previousValue)
+            UserDefaults.standard.set(previousValue, forKey: Self.launchAtLoginEnabledUserDefaultsKey)
+            return
+        }
+
+        let isEnabledInSystem = (SMAppService.mainApp.status == .enabled)
+        if isEnabledInSystem != desiredValue {
+            launchAtLoginErrorMessage = "QuickClip needs approval to launch at login. Please check System Settings > General > Login Items."
+            showLaunchAtLoginErrorAlert = true
+            setLaunchAtLoginEnabledProgrammatically(isEnabledInSystem)
+            UserDefaults.standard.set(isEnabledInSystem, forKey: Self.launchAtLoginEnabledUserDefaultsKey)
+        }
+    }
+
+    private func setLaunchAtLoginEnabledProgrammatically(_ value: Bool) {
+        isUpdatingLaunchAtLoginEnabled = true
+        launchAtLoginEnabled = value
+        isUpdatingLaunchAtLoginEnabled = false
     }
 
     // MARK: - 清空所有数据

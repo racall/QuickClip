@@ -107,6 +107,7 @@ struct SnippetListView: View {
                     .buttonStyle(.plain)
                     .padding(.trailing, 12)
                     .help("Settings")
+                    .pointerStyle(.link)
             }
             .background(Color.gray.opacity(0.05))
             }

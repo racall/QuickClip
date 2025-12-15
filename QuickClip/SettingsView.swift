@@ -62,14 +62,7 @@ struct SettingsView: View {
             // 主内容区
             VStack(spacing: 0) {
                 // 通知权限
-                HStack(alignment: .center) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "bell.badge")
-                        Text("Notification Permission")
-                            .foregroundColor(.primary)
-                    }
-                    Spacer()
-
+                SettingsItemRow(systemImageName: "bell.badge", title: "Notification Permission") {
                     // 根据权限状态显示不同的UI
                     if viewModel.notificationAuthorizationStatus == .authorized {
                         Text("Enabled")
@@ -82,18 +75,20 @@ struct SettingsView: View {
                         }
                     }
                 }
-                .padding(12)
+
+                Divider()
+
+                // 开机自启
+                SettingsItemRow(systemImageName: "power", title: "Launch at Login") {
+                    Toggle("", isOn: $viewModel.launchAtLoginEnabled)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                }
 
                 Divider()
 
                 // 清空数据
-                HStack(alignment: .center) {
-                    HStack(spacing:4){
-                        Image(systemName: "trash")
-                        Text("Clear all data")
-                            .foregroundColor(.primary)
-                    }
-                    Spacer()
+                SettingsItemRow(systemImageName: "trash", title: "Clear all data") {
                     Button(role: .destructive) {
                         viewModel.showClearConfirmation = true
                     } label: {
@@ -114,74 +109,46 @@ struct SettingsView: View {
                         Text("This action cannot be undone.")
                     }
                 }
-                .padding(12)
                 Divider()
 
                 // 导出 JSON
-                HStack(alignment: .center) {
-                    HStack(spacing:4){
-                        Image(systemName: "square.and.arrow.up")
-                        Text("Export to JSON")
-                            .foregroundColor(.primary)
-                    }
-                    Spacer()
+                SettingsItemRow(systemImageName: "square.and.arrow.up", title: "Export to JSON") {
                     Button {
                         viewModel.exportToJSON()
                     } label: {
-                        Text("Export to JSON")
+                        Text("Export")
                     }
                 }
-                .padding(12)
 
                 Divider()
 
                 // 导入 JSON
-                HStack(alignment: .center) {
-                    HStack(spacing:4){
-                        Image(systemName: "square.and.arrow.down")
-                        Text("Import from JSON")
-                            .foregroundColor(.primary)
-                    }
-                    Spacer()
+                SettingsItemRow(systemImageName: "square.and.arrow.down", title: "Import from JSON") {
                     Button {
                         viewModel.importFromJSON()
                     } label: {
-                        Text("Import from JSON")
+                        Text("Import")
                     }
                     
                 }
-                .padding(12)
 
                 Divider()
 
                 // iCloud 同步区域
                 VStack(spacing: 0) {
                     // iCloud 开关
-                    HStack(alignment: .center) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "icloud")
-                            Text("iCloud Sync")
-                                .foregroundColor(.primary)
-                        }
-                        Spacer()
+                    SettingsItemRow(systemImageName: "icloud", title: "iCloud Sync") {
                         Toggle("", isOn: $viewModel.iCloudSyncEnabled)
                             .toggleStyle(.switch)
                             .labelsHidden()
                             .disabled(viewModel.isSyncing)
                     }
-                    .padding(12)
 
                     // 手动同步按钮
                     if viewModel.iCloudSyncEnabled {
                         Divider()
 
-                        HStack(alignment: .center) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "arrow.triangle.2.circlepath")
-                                Text("Manual Sync")
-                                    .foregroundColor(.primary)
-                            }
-                            Spacer()
+                        SettingsItemRow(systemImageName: "arrow.triangle.2.circlepath", title: "Manual Sync") {
                             Button {
                                 Task {
                                     await viewModel.manualSync()
@@ -191,7 +158,6 @@ struct SettingsView: View {
                             }
                             .disabled(viewModel.isSyncing)
                         }
-                        .padding(12)
 
                         // 同步进度
                         if !viewModel.syncProgress.isEmpty {
@@ -242,6 +208,9 @@ struct SettingsView: View {
             // 使用真实的 modelContext 和 allSnippets 更新 viewModel
             viewModel.updateData(modelContext: modelContext, allSnippets: allSnippets)
 
+            // 刷新开机自启状态（以系统为准）
+            viewModel.refreshLaunchAtLoginStatus()
+
             // 检查通知权限状态
             Task {
                 await viewModel.checkNotificationAuthorization()
@@ -249,6 +218,11 @@ struct SettingsView: View {
         }
         .onChange(of: allSnippets) { _, _ in
             viewModel.updateData(modelContext: modelContext, allSnippets: allSnippets)
+        }
+        .alert("Unable to Update Login Item", isPresented: $viewModel.showLaunchAtLoginErrorAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(viewModel.launchAtLoginErrorMessage)
         }
     }
 
