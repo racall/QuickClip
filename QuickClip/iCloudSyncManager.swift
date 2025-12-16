@@ -89,6 +89,15 @@ final class iCloudSyncManager: ObservableObject {
         self.privateDatabase = container.privateCloudDatabase
     }
 
+    // MARK: - 工具方法
+
+    /// 归一化 CloudKit recordName（把空字符串/全空格视为 nil）
+    private func normalizedRecordName(_ recordName: String?) -> String? {
+        guard let recordName else { return nil }
+        let trimmed = recordName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     // MARK: - 公开接口
 
     /// 检查 iCloud 账户状态
@@ -130,7 +139,7 @@ final class iCloudSyncManager: ObservableObject {
             // 2. 下载云端数据
             syncProgress = "Downloading from iCloud..."
             let cloudRecords = try await downloadAllSnippets()
-
+            print("✅ 下载云端片段数量: \(cloudRecords.count)")
             // 3. 合并到本地（处理冲突）
             syncProgress = "Merging data..."
             let mergeResult = try await mergeCloudSnippets(cloudRecords)
@@ -189,7 +198,7 @@ final class iCloudSyncManager: ObservableObject {
         try await checkAccountStatus()
 
         // 如果是新片段（没有 cloudRecordID），直接上传
-        guard let recordName = snippet.cloudRecordID else {
+        guard let recordName = normalizedRecordName(snippet.cloudRecordID) else {
             try await uploadSnippet(snippet)
             return
         }
@@ -301,7 +310,7 @@ final class iCloudSyncManager: ObservableObject {
 
         // 筛选出需要同步的片段：1. 新片段（cloudRecordID 为空）2. 已修改片段（needsSync == true）
         let snippetsToSync = allSnippets.filter {
-            $0.cloudRecordID == nil || $0.needsSync == true
+            normalizedRecordName($0.cloudRecordID) == nil || $0.needsSync == true
         }
 
         guard !snippetsToSync.isEmpty else {
@@ -311,8 +320,8 @@ final class iCloudSyncManager: ObservableObject {
         var uploadedCount = 0
 
         // 分为新增和更新两组
-        let newSnippets = snippetsToSync.filter { $0.cloudRecordID == nil }
-        let updatedSnippets = snippetsToSync.filter { $0.cloudRecordID != nil && $0.needsSync == true }
+        let newSnippets = snippetsToSync.filter { normalizedRecordName($0.cloudRecordID) == nil }
+        let updatedSnippets = snippetsToSync.filter { normalizedRecordName($0.cloudRecordID) != nil && $0.needsSync == true }
 
         // 批量上传新片段
         if !newSnippets.isEmpty {
@@ -395,7 +404,7 @@ final class iCloudSyncManager: ObservableObject {
 
             // 1. 先批量获取云端记录
             let recordIDs = batch.compactMap { snippet -> CKRecord.ID? in
-                guard let recordName = snippet.cloudRecordID else { return nil }
+                guard let recordName = normalizedRecordName(snippet.cloudRecordID) else { return nil }
                 return CKRecord.ID(recordName: recordName)
             }
 
@@ -488,85 +497,257 @@ final class iCloudSyncManager: ObservableObject {
         return record
     }
 
-    /// 合并云端数据到本地（复用导入逻辑）
+    /// 合并云端数据到本地（按 updatedAt 决定覆盖方向）
     private func mergeCloudSnippets(_ cloudRecords: [SnippetCloudRecord]) async throws -> (imported: Int, skipped: Int, clearedShortcuts: Int) {
         let descriptor = FetchDescriptor<Snippet>()
         let existingSnippets = try modelContext.fetch(descriptor)
 
-        // 1. 构建内容集合（检测重复）
-        let existingContents = Set(existingSnippets.map(\.content))
-
-        // 2. 构建已有的 snippetID 集合（避免重复导入）
-        let existingSnippetIDs = Set(existingSnippets.map { $0.id.uuidString })
-
-        // 3. 构建快捷键集合（检测冲突）
-        var usedShortcuts = Set<String>()
+        // 本地索引
+        var localBySnippetID: [String: Snippet] = [:]
+        var localByContent: [String: Snippet] = [:]
         for snippet in existingSnippets {
-            if let key = snippet.shortcutKey?.trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty {
-                usedShortcuts.insert(key)
+            localBySnippetID[snippet.id.uuidString] = snippet
+            if let existing = localByContent[snippet.content] {
+                if snippet.updatedAt > existing.updatedAt {
+                    localByContent[snippet.content] = snippet
+                }
+            } else {
+                localByContent[snippet.content] = snippet
             }
         }
 
-        var importedCount = 0
-        var skippedCount = 0
-        var clearedShortcutCount = 0
+        // 快捷键占用表（沿用原策略：冲突时清空“新写入”的快捷键）
+        var shortcutOwnerByKey: [String: String] = [:]
+        for snippet in existingSnippets {
+            if let key = snippet.shortcutKey?.trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty {
+                shortcutOwnerByKey[key] = snippet.id.uuidString
+            }
+        }
+
+        func applyShortcut(_ shortcutKey: String?, to snippet: Snippet) -> Bool {
+            // 返回是否发生了“冲突清空”
+            let oldKey = snippet.shortcutKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let oldKey, !oldKey.isEmpty, shortcutOwnerByKey[oldKey] == snippet.id.uuidString {
+                shortcutOwnerByKey.removeValue(forKey: oldKey)
+            }
+
+            let trimmed = shortcutKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let trimmed, !trimmed.isEmpty else {
+                snippet.shortcutKey = nil
+                return false
+            }
+
+            if let owner = shortcutOwnerByKey[trimmed], owner != snippet.id.uuidString {
+                snippet.shortcutKey = nil
+                return true
+            }
+
+            snippet.shortcutKey = trimmed
+            shortcutOwnerByKey[trimmed] = snippet.id.uuidString
+            return false
+        }
+
+        func syncPayloadMatches(_ snippet: Snippet, _ record: SnippetCloudRecord) -> Bool {
+            (snippet.title == record.title) &&
+            (snippet.content == record.content) &&
+            ((snippet.shortcutKey ?? "").trimmingCharacters(in: .whitespacesAndNewlines) == (record.shortcutKey ?? "").trimmingCharacters(in: .whitespacesAndNewlines)) &&
+            ((snippet.showInMenuBar ?? false) == record.showInMenuBar) &&
+            (snippet.createdAt == record.createdAt) &&
+            (snippet.updatedAt == record.updatedAt)
+        }
+
+        func registerContentIndex(for snippet: Snippet, oldContent: String?) {
+            if let oldContent, let mapped = localByContent[oldContent], mapped.id == snippet.id {
+                localByContent.removeValue(forKey: oldContent)
+            }
+            if let existing = localByContent[snippet.content] {
+                if snippet.updatedAt > existing.updatedAt {
+                    localByContent[snippet.content] = snippet
+                }
+            } else {
+                localByContent[snippet.content] = snippet
+            }
+        }
+
+        // 云端索引
+        var cloudBySnippetID: [String: SnippetCloudRecord] = [:]
+        var cloudCanonicalByContent: [String: SnippetCloudRecord] = [:]
+        var allCloudRecordNames = Set<String>()
 
         for record in cloudRecords {
-            // 检查是否已存在（通过 snippetID）
-            if existingSnippetIDs.contains(record.snippetID) {
-                skippedCount += 1
-                continue
-            }
+            allCloudRecordNames.insert(record.recordID.recordName)
 
-            // 内容重复检查
-            if existingContents.contains(record.content) {
-                skippedCount += 1
-                continue
-            }
-
-            // 快捷键冲突处理
-            let trimmedShortcut = record.shortcutKey?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let resolvedShortcut: String?
-
-            if let trimmedShortcut, !trimmedShortcut.isEmpty, usedShortcuts.contains(trimmedShortcut) {
-                resolvedShortcut = nil
-                clearedShortcutCount += 1
-            } else {
-                resolvedShortcut = trimmedShortcut
-                if let resolvedShortcut, !resolvedShortcut.isEmpty {
-                    usedShortcuts.insert(resolvedShortcut)
+            if let existing = cloudBySnippetID[record.snippetID] {
+                if record.updatedAt > existing.updatedAt {
+                    cloudBySnippetID[record.snippetID] = record
                 }
+            } else {
+                cloudBySnippetID[record.snippetID] = record
             }
 
-            // 创建新 Snippet
+            if let existing = cloudCanonicalByContent[record.content] {
+                if record.updatedAt > existing.updatedAt {
+                    cloudCanonicalByContent[record.content] = record
+                }
+            } else {
+                cloudCanonicalByContent[record.content] = record
+            }
+        }
+
+        var skippedCount = 0
+        var clearedShortcutCount = 0
+        var downloadedCount = 0
+        var didChangeLocal = false
+
+        // 1) 优先按 snippetID 处理（规则 1）
+        for (snippetID, record) in cloudBySnippetID {
+            guard let local = localBySnippetID[snippetID] else { continue }
+
+            let localWins = local.updatedAt >= record.updatedAt  // updatedAt 相同优先本地
+            if localWins {
+                // 如果已完全一致，仅修正 cloudRecordID（必要时）即可
+                let desiredRecordName = record.recordID.recordName
+                let currentRecordName = normalizedRecordName(local.cloudRecordID)
+
+                if currentRecordName != desiredRecordName {
+                    local.cloudRecordID = desiredRecordName
+                    didChangeLocal = true
+                }
+
+                if !syncPayloadMatches(local, record) {
+                    local.needsSync = true
+                    didChangeLocal = true
+                }
+
+                continue
+            }
+
+            // 云端更新更“新”，覆盖本地
+            let oldContent = local.content
+            local.title = record.title
+            local.content = record.content
+            local.showInMenuBar = record.showInMenuBar
+            local.createdAt = record.createdAt
+            local.updatedAt = record.updatedAt
+            local.cloudRecordID = record.recordID.recordName
+            local.needsSync = false
+            local.lastSyncedAt = Date()
+            downloadedCount += 1
+
+            if applyShortcut(record.shortcutKey, to: local) {
+                clearedShortcutCount += 1
+            }
+
+            registerContentIndex(for: local, oldContent: oldContent)
+            didChangeLocal = true
+        }
+
+        // 2) 按 content 处理（规则 2/3，且同 content 只取云端最新一条）
+        let canonicalCloudRecords = cloudCanonicalByContent.values.sorted { $0.updatedAt > $1.updatedAt }
+        for record in canonicalCloudRecords {
+            if localBySnippetID[record.snippetID] != nil {
+                // 该 snippetID 已存在于本地，且已在上一步处理；这里不再重复导入
+                continue
+            }
+
+            if let local = localByContent[record.content] {
+                // content 命中，但 snippetID 不同（规则 3）
+                let localWins = local.updatedAt >= record.updatedAt  // updatedAt 相同优先本地
+                if localWins {
+                    let desiredRecordName = record.recordID.recordName
+                    let currentRecordName = normalizedRecordName(local.cloudRecordID)
+
+                    if currentRecordName != desiredRecordName {
+                        local.cloudRecordID = desiredRecordName
+                        didChangeLocal = true
+                    }
+
+                    if !syncPayloadMatches(local, record) {
+                        local.needsSync = true
+                        didChangeLocal = true
+                    }
+
+                    continue
+                }
+
+                // 云端更“新”，覆盖本地（保持本地 id 不变）
+                let oldContent = local.content
+                local.title = record.title
+                local.content = record.content
+                local.showInMenuBar = record.showInMenuBar
+                local.createdAt = record.createdAt
+                local.updatedAt = record.updatedAt
+                local.cloudRecordID = record.recordID.recordName
+                local.needsSync = false
+                local.lastSyncedAt = Date()
+                downloadedCount += 1
+
+                if applyShortcut(record.shortcutKey, to: local) {
+                    clearedShortcutCount += 1
+                }
+
+                registerContentIndex(for: local, oldContent: oldContent)
+                didChangeLocal = true
+                continue
+            }
+
+            // 本地无 snippetID 命中、也无 content 命中（规则 2）：导入云端记录
             let newSnippet = Snippet(
                 title: record.title,
                 content: record.content,
-                shortcutKey: resolvedShortcut,
+                shortcutKey: nil,
                 showInMenuBar: record.showInMenuBar
             )
 
-            // 保留原始时间戳
+            // 使用云端 snippetID 作为本地 id，确保跨设备可稳定匹配
+            if let uuid = UUID(uuidString: record.snippetID) {
+                newSnippet.id = uuid
+            }
+
             newSnippet.createdAt = record.createdAt
             newSnippet.updatedAt = record.updatedAt
-
-            // 保存云端记录 ID
             newSnippet.cloudRecordID = record.recordID.recordName
             newSnippet.lastSyncedAt = Date()
+            newSnippet.needsSync = false
+
+            if applyShortcut(record.shortcutKey, to: newSnippet) {
+                clearedShortcutCount += 1
+            }
 
             modelContext.insert(newSnippet)
-            importedCount += 1
+            localBySnippetID[newSnippet.id.uuidString] = newSnippet
+            localByContent[newSnippet.content] = newSnippet
+
+            downloadedCount += 1
+            didChangeLocal = true
         }
 
-        if importedCount > 0 {
-            try modelContext.save()
+        // 3) 修复“本地认为已同步，但云端无对应 record”的情况（旧数据不上传的根因之一）
+        for snippet in existingSnippets {
+            // 空白 recordName 直接视为 nil
+            if normalizedRecordName(snippet.cloudRecordID) == nil, snippet.cloudRecordID != nil {
+                snippet.cloudRecordID = nil
+                didChangeLocal = true
+            }
 
-            // 发送通知更新
+            guard let recordName = normalizedRecordName(snippet.cloudRecordID) else { continue }
+            if !allCloudRecordNames.contains(recordName) {
+                snippet.cloudRecordID = nil
+                snippet.needsSync = true
+                didChangeLocal = true
+            }
+        }
+
+        // 统计 skipped：云端重复 content 的旧记录数量
+        skippedCount = max(0, cloudRecords.count - cloudCanonicalByContent.count)
+
+        if didChangeLocal {
+            try modelContext.save()
             NotificationCenter.default.post(name: NSNotification.Name("HotKeysNeedUpdate"), object: nil)
             NotificationCenter.default.post(name: NSNotification.Name("MenuBarNeedUpdate"), object: nil)
         }
 
-        return (importedCount, skippedCount, clearedShortcutCount)
+        return (downloadedCount, skippedCount, clearedShortcutCount)
     }
 
     // MARK: - 错误处理
